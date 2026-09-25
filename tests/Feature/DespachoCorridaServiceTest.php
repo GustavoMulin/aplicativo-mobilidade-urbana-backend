@@ -1,6 +1,6 @@
 <?php
 
-// CODEX: 26 linhas alteradas neste arquivo; valida a separação entre os perfis do passageiro e do motorista.
+// CODEX: 3 linhas alteradas; valida o horário final da carência de cancelamento. Remover após validação.
 
 use App\Events\CorridaAtualizada;
 use App\Events\CorridasDisponiveisAlteradas;
@@ -632,6 +632,7 @@ it('entrega ao motorista os dados do passageiro correto e os pontos da rota', fu
     $this->actingAs($passageiro->user, 'jwt')->getJson('/api/minha-corrida-atual')
         ->assertOk()
         ->assertJsonPath('corrida.motorista.user.name', 'João')
+        ->assertJsonPath('corrida.cancelamento_gratis_ate', fn ($valor) => is_string($valor) && str_contains($valor, 'T'))
         ->assertJsonPath('motorista_info.nome', 'João')
         ->assertJsonPath('motorista_info.telefone', $motorista->user->telefone)
         ->assertJsonPath('motorista_info.nota', null)
