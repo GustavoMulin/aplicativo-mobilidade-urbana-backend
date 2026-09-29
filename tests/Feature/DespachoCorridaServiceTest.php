@@ -781,3 +781,55 @@ it('fecha o fluxo completo e permite uma avaliacao para cada lado', function () 
     expect(AvaliacoesCorrida::where('corrida_id', $corrida->id)->count())->toBe(2)
         ->and($servico->situacaoDe($motorista)['disponivel'])->toBeTrue();
 });
+
+it('mostra a avaliacao uma vez e preserva nota maxima quando o passageiro dispensa', function () {
+    [$motorista] = criarMotoristaDespacho(true);
+    $passageiro = criarPassageiroDespacho();
+    $servico = app(DespachoCorridaService::class);
+    $corrida = criarCorridaDespacho($passageiro);
+    $servico->aceitar($motorista, $corrida->id);
+    $servico->transicionar($motorista, $corrida->id, 'cheguei');
+    $servico->transicionar($motorista, $corrida->id, 'iniciar');
+    $servico->transicionar($motorista, $corrida->id, 'finalizar');
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->getJson('/api/corrida-para-avaliar?perfil=passageiro&registrar_padrao=1')
+        ->assertOk()
+        ->assertJsonPath('corrida.id', $corrida->id);
+
+    $avaliacao = AvaliacoesCorrida::where('corrida_id', $corrida->id)
+        ->where('usuario_id', $passageiro->user_id)
+        ->firstOrFail();
+
+    expect($avaliacao->nota)->toBe(5)
+        ->and($avaliacao->automatica)->toBeTrue();
+
+    $this->getJson('/api/corrida-para-avaliar?perfil=passageiro&registrar_padrao=1')
+        ->assertOk()
+        ->assertJsonPath('corrida', null);
+
+    $this->postJson('/api/avaliacoes-corridas', [
+        'corrida_id' => $corrida->id,
+        'nota' => 4,
+        'comentario' => 'Avaliação escolhida pelo passageiro.',
+    ])->assertOk()->assertJsonPath('nota', 4)->assertJsonPath('automatica', false);
+
+    expect(AvaliacoesCorrida::where('corrida_id', $corrida->id)
+        ->where('usuario_id', $passageiro->user_id)->count())->toBe(1);
+});
+
+it('aceita registrar_padrao=true na query, como o axios do app envia', function () {
+    [$motorista] = criarMotoristaDespacho(true);
+    $passageiro = criarPassageiroDespacho();
+    $servico = app(DespachoCorridaService::class);
+    $corrida = criarCorridaDespacho($passageiro);
+    $servico->aceitar($motorista, $corrida->id);
+    $servico->transicionar($motorista, $corrida->id, 'cheguei');
+    $servico->transicionar($motorista, $corrida->id, 'iniciar');
+    $servico->transicionar($motorista, $corrida->id, 'finalizar');
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->getJson('/api/corrida-para-avaliar?perfil=passageiro&registrar_padrao=true')
+        ->assertOk()
+        ->assertJsonPath('corrida.id', $corrida->id);
+});
