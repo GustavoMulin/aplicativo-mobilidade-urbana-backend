@@ -1,6 +1,6 @@
 <?php
 
-// CODEX: 3 linhas alteradas; valida o horário final da carência de cancelamento. Remover após validação.
+// CODEX: 50 linhas alteradas; avaliação, embarque e cancelamentos. Remover após validação.
 
 use App\Events\CorridaAtualizada;
 use App\Events\CorridasDisponiveisAlteradas;
@@ -477,6 +477,18 @@ it('deixa o passageiro cancelar de graca logo apos o aceite', function () {
     expect($cancelada->status_corrida)->toBe('cancelada')
         ->and($cancelada->tipo_cancelamento)->toBeNull()
         ->and(StatusBusca::where('motorista_id', $motorista->id)->value('disponivel'))->toBeTrue();
+});
+
+it('mantem tres minutos de cancelamento gratuito antes da chegada', function () {
+    [, $status, , $corrida] = corridaAceitaLonge();
+    $status->update(['latitude' => -8.770160]);
+    $servico = app(DespachoCorridaService::class);
+
+    $corrida->update(['tempo_aceite' => now()->subSeconds(179)]);
+    expect($servico->previsaoCancelamentoPassageiro($corrida->fresh())['cobra'])->toBeFalse();
+
+    $corrida->update(['tempo_aceite' => now()->subSeconds(180)]);
+    expect($servico->previsaoCancelamentoPassageiro($corrida->fresh())['cobra'])->toBeTrue();
 });
 
 it('nao cobra depois da carencia se o motorista quase nao avancou', function () {

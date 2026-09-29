@@ -1,6 +1,6 @@
 <?php
 
-// CODEX: 12 linhas alteradas; expõe o fim da carência de cancelamento da corrida aceita. Remover após validação.
+// CODEX: 4 linhas alteradas; avaliação, embarque e cancelamentos. Remover após validação.
 
 namespace App\Http\Controllers\Corrida;
 
@@ -231,7 +231,7 @@ class CorridaController extends Controller
             $corrida->setAttribute(
                 'cancelamento_gratis_ate',
                 Carbon::parse($corrida->tempo_aceite)
-                    ->addSeconds(max(0, (int) config('precificacao.cancelamento_passageiro_carencia_segundos', 120)))
+                    ->addSeconds(max(0, (int) config('precificacao.cancelamento_passageiro_carencia_segundos', 180)))
                     ->toIso8601String()
             );
         }

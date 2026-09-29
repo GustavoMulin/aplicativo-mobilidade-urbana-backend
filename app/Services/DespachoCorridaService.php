@@ -1,5 +1,7 @@
 <?php
 
+// CODEX: 116 linhas alteradas; avaliação, embarque e cancelamentos. Remover após validação.
+
 namespace App\Services;
 
 use App\Events\CorridaAtualizada;
@@ -15,6 +17,7 @@ use App\Support\Avisar;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 class DespachoCorridaService
@@ -356,32 +359,7 @@ class DespachoCorridaService
                     throw new RuntimeException('Atualize sua localização perto do embarque para registrar a ausência.', 409);
                 }
 
-                $financeiro = $corrida->corrida_financeiro()->first();
-                if ($financeiro === null) {
-                    throw new RuntimeException('Dados financeiros da corrida indisponíveis.', 409);
-                }
-
-                $tarifaBase = (float) ($financeiro->tarifa_base ?? 0);
-                if ($tarifaBase <= 0 && $corrida->tarifa_id !== null) {
-                    $tarifaBase = (float) Tarifa::whereKey($corrida->tarifa_id)->value('tarifa_base');
-                }
-                $taxa = round(max(0, $tarifaBase), 2);
-                if ($taxa <= 0) {
-                    throw new RuntimeException('A tarifa base da categoria não está configurada.', 409);
-                }
-
-                $financeiro->update([
-                    'valor_bruto' => $taxa,
-                    'valor_sem_dinamica' => $taxa,
-                    'valor_base_calculado' => $taxa,
-                    'valor_pago_passageiro' => $taxa,
-                    'valor_motorista' => $taxa,
-                    'valor_liquido_motorista' => $taxa,
-                    'taxa_plataforma_valor' => 0,
-                    'taxa_plataforma_percentual' => 0,
-                    'taxa_espera' => 0,
-                    'taxa_cancelamento' => $taxa,
-                ]);
+                $this->aplicarTaxaAusencia($corrida);
             }
 
             $tipoRegistrado = $tipo;
@@ -421,6 +399,90 @@ class DespachoCorridaService
 
             return $corrida->fresh(['corrida_destinos', 'corrida_financeiro']);
         });
+    }
+
+    public function cancelarEsperasExpiradas(): int
+    {
+        $limite = max(1, (int) config('precificacao.espera_cancelamento_automatico_segundos', 720));
+        $ids = Corrida::query()
+            ->where('status_corrida', 'motorista_chegou')
+            ->whereNotNull('tempo_chegada_origem')
+            ->where('tempo_chegada_origem', '<=', now()->subSeconds($limite))
+            ->pluck('id');
+
+        $canceladas = 0;
+
+        foreach ($ids as $corridaId) {
+            try {
+                $cancelada = DB::transaction(function () use ($corridaId, $limite) {
+                    $corrida = Corrida::whereKey($corridaId)->lockForUpdate()->first();
+
+                    if ($corrida === null || $corrida->status_corrida !== 'motorista_chegou'
+                        || $corrida->tempo_chegada_origem === null
+                        || Carbon::parse($corrida->tempo_chegada_origem)->gt(now()->subSeconds($limite))) {
+                        return false;
+                    }
+
+                    $this->aplicarTaxaAusencia($corrida);
+                    $corrida->update([
+                        'status_corrida' => 'cancelada',
+                        'cancelado_por' => 'sistema',
+                        'motivo_cancelamento' => 'Tempo máximo de espera no embarque atingido.',
+                        'tipo_cancelamento' => 'nao_comparecimento',
+                    ]);
+
+                    if ($corrida->motorista_id !== null) {
+                        StatusBusca::where('motorista_id', $corrida->motorista_id)
+                            ->update(['disponivel' => true, 'visto_em' => now()]);
+                    }
+
+                    Avisar::semQuebrar(new CorridaAtualizada($corrida->id, 'cancelada'));
+                    Avisar::semQuebrar(new CorridasDisponiveisAlteradas);
+
+                    return true;
+                });
+            } catch (RuntimeException $e) {
+                Log::warning('Não foi possível cancelar automaticamente uma espera expirada.', [
+                    'corrida_id' => $corridaId,
+                    'motivo' => $e->getMessage(),
+                ]);
+                $cancelada = false;
+            }
+
+            $canceladas += (int) $cancelada;
+        }
+
+        return $canceladas;
+    }
+
+    private function aplicarTaxaAusencia(Corrida $corrida): void
+    {
+        $financeiro = $corrida->corrida_financeiro()->first();
+        if ($financeiro === null) {
+            throw new RuntimeException('Dados financeiros da corrida indisponíveis.', 409);
+        }
+
+        $tarifaBase = (float) ($financeiro->tarifa_base ?? 0);
+        if ($tarifaBase <= 0 && $corrida->tarifa_id !== null) {
+            $tarifaBase = (float) Tarifa::whereKey($corrida->tarifa_id)->value('tarifa_base');
+        }
+        $taxa = round(max(0, $tarifaBase), 2);
+        if ($taxa <= 0) {
+            throw new RuntimeException('A tarifa base da categoria não está configurada.', 409);
+        }
+
+        $financeiro->update([
+            'valor_bruto' => $taxa,
+            'valor_sem_dinamica' => $taxa,
+            'valor_base_calculado' => $taxa,
+            'valor_pago_passageiro' => $taxa,
+            'valor_motorista' => $taxa,
+            'valor_liquido_motorista' => $taxa,
+            'taxa_plataforma_valor' => 0,
+            'taxa_plataforma_percentual' => 0,
+            'taxa_espera' => 0,
+            'taxa_cancelamento' => $taxa,
+        ]);
     }
 
     /**
@@ -615,7 +677,7 @@ class DespachoCorridaService
         if ($status === 'motorista_chegou') {
             $km = $distanciaAceite;
         } else {
-            $carencia = max(0, (int) config('precificacao.cancelamento_passageiro_carencia_segundos', 120));
+            $carencia = max(0, (int) config('precificacao.cancelamento_passageiro_carencia_segundos', 180));
 
             if ($corrida->tempo_aceite !== null
                 && Carbon::parse($corrida->tempo_aceite)->diffInSeconds(now()) < $carencia) {
