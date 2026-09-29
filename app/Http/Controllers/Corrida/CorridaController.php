@@ -1,6 +1,6 @@
 <?php
 
-// CODEX: 16 linhas alteradas neste arquivo; separa a corrida atual pelo perfil solicitado pelo aplicativo.
+// CODEX: 4 linhas alteradas; avaliação, embarque e cancelamentos. Remover após validação.
 
 namespace App\Http\Controllers\Corrida;
 
@@ -21,6 +21,7 @@ use App\Services\ObterTracadoRotaService;
 use App\Services\ResolverTarifaService;
 use App\Services\SimularCorridaNegociadaService;
 use App\Services\SolicitarCorridaService;
+use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -224,6 +225,15 @@ class CorridaController extends Controller
             && ! in_array($corrida->status_corrida, ['motorista_chegou', 'em_andamento'], true);
         if ($ocultarFotoPassageiro) {
             $corrida->passageiro?->user?->setAttribute('foto', null);
+        }
+
+        if ($corrida->status_corrida === 'aceita' && $corrida->tempo_aceite !== null) {
+            $corrida->setAttribute(
+                'cancelamento_gratis_ate',
+                Carbon::parse($corrida->tempo_aceite)
+                    ->addSeconds(max(0, (int) config('precificacao.cancelamento_passageiro_carencia_segundos', 180)))
+                    ->toIso8601String()
+            );
         }
 
         $posicao = $corrida->motorista_id === null

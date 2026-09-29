@@ -1,5 +1,7 @@
 <?php
 
+// CODEX: 5 linhas alteradas; avaliação, embarque e cancelamentos. Remover após validação.
+
 return [
     'valor_por_km' => (float) env('PRECIFICACAO_VALOR_POR_KM', 1.50),
     'valor_por_minuto' => (float) env('PRECIFICACAO_VALOR_POR_MINUTO', 0.25),
@@ -19,11 +21,12 @@ return [
     'distancia_maxima_chegada_km' => (float) env('MOTORISTA_DISTANCIA_MAXIMA_CHEGADA_KM', 0.5),
     'posicao_chegada_validade_segundos' => (int) env('MOTORISTA_POSICAO_CHEGADA_VALIDADE_SEGUNDOS', 120),
 
-    'cancelamento_passageiro_carencia_segundos' => (int) env('CANCELAMENTO_PASSAGEIRO_CARENCIA_SEGUNDOS', 120),
+    'cancelamento_passageiro_carencia_segundos' => (int) env('CANCELAMENTO_PASSAGEIRO_CARENCIA_SEGUNDOS', 180),
     'cancelamento_passageiro_distancia_minima_km' => (float) env('CANCELAMENTO_PASSAGEIRO_DISTANCIA_MINIMA_KM', 1.0),
 
     'cotacao_validade_minutos' => (int) env('PRECIFICACAO_COTACAO_VALIDADE_MIN', 10),
 
     'espera_tolerancia_segundos' => (int) env('PRECIFICACAO_ESPERA_TOLERANCIA_SEGUNDOS', 120),
     'espera_limite_cobranca_segundos' => (int) env('PRECIFICACAO_ESPERA_LIMITE_COBRANCA_SEGUNDOS', 720),
+    'espera_cancelamento_automatico_segundos' => (int) env('PRECIFICACAO_ESPERA_CANCELAMENTO_AUTOMATICO_SEGUNDOS', 720),
 ];

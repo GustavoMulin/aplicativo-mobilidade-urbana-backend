@@ -1,5 +1,7 @@
 <?php
 
+// CODEX: 20 linhas alteradas; avaliação, embarque e cancelamentos. Remover após validação.
+
 use App\Models\Corrida;
 use App\Models\CorridaDestino;
 use App\Models\CorridaFinanceiro;
@@ -228,6 +230,24 @@ it('registra apenas a tarifa base ao cancelar por ausência e mantém motorista 
     expect(fn () => app(DespachoCorridaService::class)->cancelar(
         $corrida->id, 'motorista', $motorista->id, null, 'nao_comparecimento'
     ))->toThrow(RuntimeException::class);
+});
+
+it('cancela e cobra automaticamente ao atingir doze minutos de espera', function () {
+    Carbon::setTestNow('2026-09-18 12:00:00');
+    [$corridaAntes, $motoristaAntes] = criarCorridaEspera((12 * 60) - 1);
+    prepararCancelamentoPorAusencia($corridaAntes, $motoristaAntes);
+    [$corridaExpirada, $motoristaExpirado] = criarCorridaEspera(12 * 60);
+    prepararCancelamentoPorAusencia($corridaExpirada, $motoristaExpirado);
+    $servico = app(DespachoCorridaService::class);
+
+    expect($servico->cancelarEsperasExpiradas())->toBe(1)
+        ->and($corridaAntes->fresh()->status_corrida)->toBe('motorista_chegou')
+        ->and($corridaExpirada->fresh()->status_corrida)->toBe('cancelada')
+        ->and($corridaExpirada->fresh()->cancelado_por)->toBe('sistema')
+        ->and($corridaExpirada->fresh()->tipo_cancelamento)->toBe('nao_comparecimento')
+        ->and((float) $corridaExpirada->corrida_financeiro()->value('taxa_cancelamento'))->toBe(4.5)
+        ->and(StatusBusca::where('motorista_id', $motoristaExpirado->id)->value('disponivel'))->toBeTrue()
+        ->and($servico->cancelarEsperasExpiradas())->toBe(0);
 });
 
 it('aplica a taxa pela API somente ao motorista vinculado à corrida', function () {

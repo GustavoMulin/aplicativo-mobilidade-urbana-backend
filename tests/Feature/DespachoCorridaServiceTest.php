@@ -1,6 +1,6 @@
 <?php
 
-// CODEX: 26 linhas alteradas neste arquivo; valida a separação entre os perfis do passageiro e do motorista.
+// CODEX: 50 linhas alteradas; avaliação, embarque e cancelamentos. Remover após validação.
 
 use App\Events\CorridaAtualizada;
 use App\Events\CorridasDisponiveisAlteradas;
@@ -479,6 +479,18 @@ it('deixa o passageiro cancelar de graca logo apos o aceite', function () {
         ->and(StatusBusca::where('motorista_id', $motorista->id)->value('disponivel'))->toBeTrue();
 });
 
+it('mantem tres minutos de cancelamento gratuito antes da chegada', function () {
+    [, $status, , $corrida] = corridaAceitaLonge();
+    $status->update(['latitude' => -8.770160]);
+    $servico = app(DespachoCorridaService::class);
+
+    $corrida->update(['tempo_aceite' => now()->subSeconds(179)]);
+    expect($servico->previsaoCancelamentoPassageiro($corrida->fresh())['cobra'])->toBeFalse();
+
+    $corrida->update(['tempo_aceite' => now()->subSeconds(180)]);
+    expect($servico->previsaoCancelamentoPassageiro($corrida->fresh())['cobra'])->toBeTrue();
+});
+
 it('nao cobra depois da carencia se o motorista quase nao avancou', function () {
     [, $status, $passageiro, $corrida] = corridaAceitaLonge();
     $corrida->update(['tempo_aceite' => now()->subMinutes(5)]);
@@ -632,6 +644,7 @@ it('entrega ao motorista os dados do passageiro correto e os pontos da rota', fu
     $this->actingAs($passageiro->user, 'jwt')->getJson('/api/minha-corrida-atual')
         ->assertOk()
         ->assertJsonPath('corrida.motorista.user.name', 'João')
+        ->assertJsonPath('corrida.cancelamento_gratis_ate', fn ($valor) => is_string($valor) && str_contains($valor, 'T'))
         ->assertJsonPath('motorista_info.nome', 'João')
         ->assertJsonPath('motorista_info.telefone', $motorista->user->telefone)
         ->assertJsonPath('motorista_info.nota', null)
@@ -767,4 +780,56 @@ it('fecha o fluxo completo e permite uma avaliacao para cada lado', function () 
 
     expect(AvaliacoesCorrida::where('corrida_id', $corrida->id)->count())->toBe(2)
         ->and($servico->situacaoDe($motorista)['disponivel'])->toBeTrue();
+});
+
+it('mostra a avaliacao uma vez e preserva nota maxima quando o passageiro dispensa', function () {
+    [$motorista] = criarMotoristaDespacho(true);
+    $passageiro = criarPassageiroDespacho();
+    $servico = app(DespachoCorridaService::class);
+    $corrida = criarCorridaDespacho($passageiro);
+    $servico->aceitar($motorista, $corrida->id);
+    $servico->transicionar($motorista, $corrida->id, 'cheguei');
+    $servico->transicionar($motorista, $corrida->id, 'iniciar');
+    $servico->transicionar($motorista, $corrida->id, 'finalizar');
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->getJson('/api/corrida-para-avaliar?perfil=passageiro&registrar_padrao=1')
+        ->assertOk()
+        ->assertJsonPath('corrida.id', $corrida->id);
+
+    $avaliacao = AvaliacoesCorrida::where('corrida_id', $corrida->id)
+        ->where('usuario_id', $passageiro->user_id)
+        ->firstOrFail();
+
+    expect($avaliacao->nota)->toBe(5)
+        ->and($avaliacao->automatica)->toBeTrue();
+
+    $this->getJson('/api/corrida-para-avaliar?perfil=passageiro&registrar_padrao=1')
+        ->assertOk()
+        ->assertJsonPath('corrida', null);
+
+    $this->postJson('/api/avaliacoes-corridas', [
+        'corrida_id' => $corrida->id,
+        'nota' => 4,
+        'comentario' => 'Avaliação escolhida pelo passageiro.',
+    ])->assertOk()->assertJsonPath('nota', 4)->assertJsonPath('automatica', false);
+
+    expect(AvaliacoesCorrida::where('corrida_id', $corrida->id)
+        ->where('usuario_id', $passageiro->user_id)->count())->toBe(1);
+});
+
+it('aceita registrar_padrao=true na query, como o axios do app envia', function () {
+    [$motorista] = criarMotoristaDespacho(true);
+    $passageiro = criarPassageiroDespacho();
+    $servico = app(DespachoCorridaService::class);
+    $corrida = criarCorridaDespacho($passageiro);
+    $servico->aceitar($motorista, $corrida->id);
+    $servico->transicionar($motorista, $corrida->id, 'cheguei');
+    $servico->transicionar($motorista, $corrida->id, 'iniciar');
+    $servico->transicionar($motorista, $corrida->id, 'finalizar');
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->getJson('/api/corrida-para-avaliar?perfil=passageiro&registrar_padrao=true')
+        ->assertOk()
+        ->assertJsonPath('corrida.id', $corrida->id);
 });

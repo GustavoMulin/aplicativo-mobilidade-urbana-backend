@@ -1,3 +1,4 @@
+# CODEX: 21 linhas alteradas; avaliação, embarque e cancelamentos. Remover após validação.
 services:
     laravel.test:
         build:
@@ -28,6 +29,26 @@ services:
             - valkey
             - rustfs
             - mailpit
+    scheduler:
+        build:
+            context: ./docker/8.5-nginx
+            dockerfile: Dockerfile
+            args:
+                WWWGROUP: '${WWWGROUP}'
+                TIMEZONE: '${CONTAINER_TIMEZONE:-America/Porto_Velho}'
+        image: 'sail-8.5/app'
+        command: php artisan schedule:work
+        environment:
+            TZ: '${CONTAINER_TIMEZONE:-America/Porto_Velho}'
+            WWWUSER: '${WWWUSER}'
+            LARAVEL_SAIL: 1
+        volumes:
+            - '.:/var/www/html'
+        networks:
+            - sail
+        depends_on:
+            - mysql
+            - valkey
     mysql:
         image: 'mysql:8.4'
         ports:
