@@ -133,6 +133,23 @@ class CorridaMotoristaController extends Controller
         return response()->json($atualizada);
     }
 
+    public function confirmarParada(Request $request, int $corrida): JsonResponse
+    {
+        $motorista = $this->motoristaDoUsuario($request);
+
+        if ($motorista === null) {
+            return $this->negarPorCadastro();
+        }
+
+        try {
+            $atualizada = $this->despachoCorridaService->confirmarParada($motorista, $corrida);
+        } catch (RuntimeException $excecao) {
+            return response()->json(['message' => $excecao->getMessage()], $this->status($excecao));
+        }
+
+        return response()->json($atualizada);
+    }
+
     public function cancelar(Request $request, int $corrida): JsonResponse
     {
         $dados = $request->validate([

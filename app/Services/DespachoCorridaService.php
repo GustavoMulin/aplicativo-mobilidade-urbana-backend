@@ -313,6 +313,42 @@ class DespachoCorridaService
         });
     }
 
+    /**
+     * Marca a próxima parada pendente (menor ordem) como concluída. A
+     * navegação do motorista e o acompanhamento do passageiro passam a
+     * apontar para o ponto seguinte.
+     */
+    public function confirmarParada(Motorista $motorista, int $corridaId): Corrida
+    {
+        return DB::transaction(function () use ($motorista, $corridaId) {
+            $corrida = Corrida::whereKey($corridaId)->lockForUpdate()->first();
+
+            if ($corrida === null || $corrida->motorista_id !== $motorista->id) {
+                throw new RuntimeException('Corrida não encontrada.', 404);
+            }
+
+            if ($corrida->status_corrida !== 'em_andamento') {
+                throw new RuntimeException('As paradas são confirmadas durante a viagem.', 409);
+            }
+
+            $parada = $corrida->corrida_destinos()
+                ->where('tipo', 'parada')
+                ->whereNull('concluida_em')
+                ->orderBy('ordem')
+                ->first();
+
+            if ($parada === null) {
+                throw new RuntimeException('Não há parada pendente nesta corrida.', 409);
+            }
+
+            $parada->update(['concluida_em' => now()]);
+
+            Avisar::semQuebrar(new CorridaAtualizada($corrida->id, $corrida->status_corrida));
+
+            return $corrida->fresh(['corrida_destinos', 'corrida_financeiro']);
+        });
+    }
+
     public function cancelar(int $corridaId, string $quem, ?int $donoId, ?string $motivo, ?string $tipo = null, ?float $taxaConfirmada = null): Corrida
     {
         $permitidos = self::CANCELAVEL_POR[$quem] ?? [];

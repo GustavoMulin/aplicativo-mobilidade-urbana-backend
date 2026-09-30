@@ -24,6 +24,7 @@ Route::post('motorista/corridas/{corrida}/aceitar', [CorridaMotoristaController:
 Route::post('motorista/corridas/{corrida}/{acao}', [CorridaMotoristaController::class, 'transicionar'])
     ->whereIn('acao', ['cheguei', 'iniciar', 'finalizar']);
 Route::post('motorista/corridas/{corrida}/cancelar', [CorridaMotoristaController::class, 'cancelar']);
+Route::post('motorista/corridas/{corrida}/confirmar-parada', [CorridaMotoristaController::class, 'confirmarParada']);
 
 Route::get('minha-corrida-atual', [CorridaController::class, 'minhaCorridaAtual']);
 Route::get('corridas/{corrida}/cancelamento', [CorridaController::class, 'previsaoCancelamento'])
