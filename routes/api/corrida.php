@@ -25,11 +25,17 @@ Route::post('motorista/corridas/{corrida}/{acao}', [CorridaMotoristaController::
     ->whereIn('acao', ['cheguei', 'iniciar', 'finalizar']);
 Route::post('motorista/corridas/{corrida}/cancelar', [CorridaMotoristaController::class, 'cancelar']);
 Route::post('motorista/corridas/{corrida}/confirmar-parada', [CorridaMotoristaController::class, 'confirmarParada']);
+Route::post('motorista/corridas/{corrida}/destino/{alteracao}/{resposta}', [CorridaMotoristaController::class, 'responderNovoDestino'])
+    ->whereNumber('alteracao')
+    ->whereIn('resposta', ['aceitar', 'recusar']);
 
 Route::get('minha-corrida-atual', [CorridaController::class, 'minhaCorridaAtual']);
 Route::get('corridas/{corrida}/cancelamento', [CorridaController::class, 'previsaoCancelamento'])
     ->middleware('throttle:10,1');
 Route::post('corridas/{corrida}/cancelar', [CorridaController::class, 'cancelar']);
+Route::post('corridas/{corrida}/pagamento', [CorridaController::class, 'alterarPagamento']);
+Route::post('corridas/{corrida}/destino', [CorridaController::class, 'pedirNovoDestino'])->middleware('throttle:10,1');
+Route::delete('corridas/{corrida}/destino', [CorridaController::class, 'desistirDoNovoDestino']);
 
 Route::apiResource('corridas', CorridaController::class)->only(['index', 'store', 'show']);
 Route::post('precos-corrida', [CorridaController::class, 'precosCorrida'])->middleware('throttle:30,1');

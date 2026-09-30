@@ -11,6 +11,7 @@ use App\Models\CotacaoCorrida;
 use App\Models\Motorista;
 use App\Models\Passageiro;
 use App\Services\AjustarPontoEmbarqueService;
+use App\Services\AlterarCorridaService;
 use App\Services\CalcularPrecoCorridaService;
 use App\Services\ContabilizarEsperaCorridaService;
 use App\Services\DespachoCorridaService;
@@ -195,6 +196,63 @@ class CorridaController extends Controller
         return response()->json($cancelada);
     }
 
+    public function alterarPagamento(Request $request, int $corrida, AlterarCorridaService $alterarCorrida): JsonResponse
+    {
+        $dados = $request->validate([
+            'metodo_pagamento' => 'required|in:dinheiro,cartao,pix',
+        ]);
+
+        return $this->alterarComoPassageiro($request, $corrida, $alterarCorrida,
+            fn (int $passageiroId) => $alterarCorrida->alterarPagamento($passageiroId, $corrida, $dados['metodo_pagamento']));
+    }
+
+    public function pedirNovoDestino(Request $request, int $corrida, AlterarCorridaService $alterarCorrida): JsonResponse
+    {
+        $dados = $request->validate([
+            'endereco' => 'required|string|max:255',
+            'latitude' => 'required|numeric|between:-90,90|not_in:0',
+            'longitude' => 'required|numeric|between:-180,180|not_in:0',
+        ]);
+
+        return $this->alterarComoPassageiro($request, $corrida, $alterarCorrida,
+            fn (int $passageiroId) => $alterarCorrida->pedirNovoDestino($passageiroId, $corrida, [
+                'endereco' => $dados['endereco'],
+                'latitude' => (float) $dados['latitude'],
+                'longitude' => (float) $dados['longitude'],
+            ]));
+    }
+
+    public function desistirDoNovoDestino(Request $request, int $corrida, AlterarCorridaService $alterarCorrida): JsonResponse
+    {
+        return $this->alterarComoPassageiro($request, $corrida, $alterarCorrida,
+            fn (int $passageiroId) => $alterarCorrida->desistirDoNovoDestino($passageiroId, $corrida));
+    }
+
+    /**
+     * @param  callable(int): Corrida  $alterar
+     */
+    private function alterarComoPassageiro(Request $request, int $corrida, AlterarCorridaService $alterarCorrida, callable $alterar): JsonResponse
+    {
+        $passageiroId = Passageiro::where('user_id', $request->user()->id)->value('id');
+
+        if ($passageiroId === null) {
+            return response()->json(['message' => 'Corrida não encontrada.'], 404);
+        }
+
+        try {
+            $atualizada = $alterar((int) $passageiroId);
+        } catch (RuntimeException $excecao) {
+            $status = in_array($excecao->getCode(), [404, 409, 422], true) ? (int) $excecao->getCode() : 422;
+
+            return response()->json(['message' => $excecao->getMessage()], $status);
+        }
+
+        $atualizada->setAttribute('pagamento_alteravel', $alterarCorrida->pagamentoAlteravel($atualizada));
+        $atualizada->setAttribute('alteracao_destino', $alterarCorrida->resumo($atualizada));
+
+        return response()->json($atualizada);
+    }
+
     public function minhaCorridaAtual(Request $request): JsonResponse
     {
         $dados = $request->validate([
@@ -240,8 +298,12 @@ class CorridaController extends Controller
             ? null
             : $this->despachoCorridaService->posicaoDoMotorista($corrida->motorista_id);
 
+        $alterarCorrida = app(AlterarCorridaService::class);
+        $corrida->setAttribute('pagamento_alteravel', $alterarCorrida->pagamentoAlteravel($corrida));
+
         return response()->json([
             'corrida' => $corrida,
+            'alteracao_destino' => $alterarCorrida->resumo($corrida),
             'motorista_posicao' => $posicao,
             'chegada' => $this->estimarChegadaService->paraCorrida($corrida),
             'passageiro' => $this->passageiroParaOMotorista($corrida, $request),
