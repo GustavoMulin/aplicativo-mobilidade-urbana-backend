@@ -277,6 +277,11 @@ it('em categoria negociada o destino não muda depois do aceite', function () us
     [$corrida, $passageiro] = criarCorridaAlteravel('aceita', 'dinheiro', 'negociada');
 
     $this->actingAs($passageiro->user, 'jwt')
+        ->getJson('/api/minha-corrida-atual?perfil=passageiro')
+        ->assertJsonPath('corrida.destino_alteravel', false)
+        ->assertJsonPath('corrida.pagamento_alteravel', true);
+
+    $this->actingAs($passageiro->user, 'jwt')
         ->postJson("/api/corridas/{$corrida->id}/destino", $novoDestino)
         ->assertStatus(409);
 

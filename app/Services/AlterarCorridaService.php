@@ -41,6 +41,16 @@ class AlterarCorridaService
             && in_array($corrida->status_corrida, self::STATUS_ALTERAVEIS, true);
     }
 
+    public function destinoAlteravel(Corrida $corrida): bool
+    {
+        if (! in_array($corrida->status_corrida, self::STATUS_ALTERAVEIS, true)) {
+            return false;
+        }
+
+        return in_array($corrida->status_corrida, ['solicitada', 'em_busca'], true)
+            || ! $this->precoNegociado($corrida);
+    }
+
     public function alterarPagamento(int $passageiroId, int $corridaId, string $metodo): Corrida
     {
         return DB::transaction(function () use ($passageiroId, $corridaId, $metodo) {

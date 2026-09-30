@@ -248,6 +248,7 @@ class CorridaController extends Controller
         }
 
         $atualizada->setAttribute('pagamento_alteravel', $alterarCorrida->pagamentoAlteravel($atualizada));
+        $atualizada->setAttribute('destino_alteravel', $alterarCorrida->destinoAlteravel($atualizada));
         $atualizada->setAttribute('alteracao_destino', $alterarCorrida->resumo($atualizada));
 
         return response()->json($atualizada);
@@ -300,6 +301,7 @@ class CorridaController extends Controller
 
         $alterarCorrida = app(AlterarCorridaService::class);
         $corrida->setAttribute('pagamento_alteravel', $alterarCorrida->pagamentoAlteravel($corrida));
+        $corrida->setAttribute('destino_alteravel', $alterarCorrida->destinoAlteravel($corrida));
 
         return response()->json([
             'corrida' => $corrida,
