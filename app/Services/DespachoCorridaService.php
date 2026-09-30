@@ -356,7 +356,7 @@ class DespachoCorridaService
                     || $posicao->visto_em->lt(now()->subMinutes(2))
                     || $this->distanciaKm((float) $posicao->latitude, (float) $posicao->longitude,
                         (float) $origem->latitude, (float) $origem->longitude) > 0.5) {
-                    throw new RuntimeException('Atualize sua localização perto do embarque para registrar a ausência.', 409);
+                    throw new RuntimeException('Você precisa estar a até 500 m do embarque para registrar a ausência.', 409);
                 }
 
                 $this->aplicarTaxaAusencia($corrida);
@@ -466,10 +466,10 @@ class DespachoCorridaService
         if ($tarifaBase <= 0 && $corrida->tarifa_id !== null) {
             $tarifaBase = (float) Tarifa::whereKey($corrida->tarifa_id)->value('tarifa_base');
         }
+        // categoria sem tarifa base (ex.: Negocia) encerra por ausência sem
+        // taxa: recusar aqui deixava o motorista preso no embarque e travava
+        // o cancelamento automático da espera
         $taxa = round(max(0, $tarifaBase), 2);
-        if ($taxa <= 0) {
-            throw new RuntimeException('A tarifa base da categoria não está configurada.', 409);
-        }
 
         $financeiro->update([
             'valor_bruto' => $taxa,
