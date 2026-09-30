@@ -42,6 +42,7 @@ class Corrida extends Model
         'distancia_ate_motorista',
         'metodo_pagamento',
         'status_pagamento',
+        'pagamento_alterado_em',
     ];
 
     /**
@@ -66,6 +67,14 @@ class Corrida extends Model
     public function corrida_destinos(): HasMany
     {
         return $this->hasMany(CorridaDestino::class);
+    }
+
+    /**
+     * @return HasMany<CorridaAlteracaoDestino, $this>
+     */
+    public function alteracoesDestino(): HasMany
+    {
+        return $this->hasMany(CorridaAlteracaoDestino::class);
     }
 
     /**
