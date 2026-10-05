@@ -78,6 +78,7 @@ class CobrancaPixService
 
         if ($dados['status'] === 'PAID') {
             Corrida::whereKey($cobranca->corrida_id)->update(['status_pagamento' => 'pago']);
+            $this->avisarMotoristaRecebimento($cobranca->corrida_id);
         }
 
         return $cobranca->refresh();
@@ -93,6 +94,21 @@ class CobrancaPixService
         $this->post('/v2/transparents/simulate-payment?'.http_build_query(['id' => $cobranca->charge_id]), ['id' => $cobranca->charge_id]);
 
         return $this->sincronizar($cobranca);
+    }
+
+    private function avisarMotoristaRecebimento(int $corridaId): void
+    {
+        $motoristaUserId = Corrida::whereKey($corridaId)
+            ->join('motoristas', 'motoristas.id', '=', 'corridas.motorista_id')
+            ->value('motoristas.user_id');
+
+        if ($motoristaUserId !== null) {
+            app(NotificarUsuarioService::class)->executar(
+                (int) $motoristaUserId,
+                'Pagamento recebido',
+                'O passageiro concluiu o pagamento desta corrida.'
+            );
+        }
     }
 
     /**

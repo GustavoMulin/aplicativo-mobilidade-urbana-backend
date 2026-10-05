@@ -25,4 +25,5 @@ Route::middleware('auth:jwt')->group(function () {
     require __DIR__.'/api/produto.php';
     require __DIR__.'/api/estimativa.php';
     require __DIR__.'/api/ajuda.php';
+    require __DIR__.'/api/notificacoes.php';
 });

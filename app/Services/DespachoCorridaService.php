@@ -31,7 +31,8 @@ class DespachoCorridaService
     ];
 
     public function __construct(
-        private readonly ContabilizarEsperaCorridaService $contabilizarEsperaCorridaService
+        private readonly ContabilizarEsperaCorridaService $contabilizarEsperaCorridaService,
+        private readonly NotificarUsuarioService $notificarUsuario,
     ) {}
 
     public function atualizarDisponibilidade(
@@ -316,6 +317,8 @@ class DespachoCorridaService
             if ($regra['para'] === 'finalizada') {
                 StatusBusca::where('motorista_id', $motorista->id)
                     ->update(['disponivel' => true, 'visto_em' => now()]);
+
+                $this->notificarFinalizacao($corrida, $motorista->user_id);
             }
 
             Avisar::semQuebrar(new CorridaAtualizada($corrida->id, $regra['para']));
@@ -358,6 +361,19 @@ class DespachoCorridaService
 
             return $corrida->fresh(['corrida_destinos', 'corrida_financeiro']);
         });
+    }
+
+    private function notificarFinalizacao(Corrida $corrida, int $userIdMotorista): void
+    {
+        $corrida->loadMissing(['corrida_financeiro', 'passageiro']);
+        $ganho = number_format((float) $corrida->corrida_financeiro?->valor_liquido_motorista, 2, ',', '.');
+        $pago = number_format((float) $corrida->corrida_financeiro?->valor_pago_passageiro, 2, ',', '.');
+
+        $this->notificarUsuario->executar($userIdMotorista, 'Corrida finalizada', "Você recebe R$ {$ganho} por esta corrida.");
+
+        if ($corrida->passageiro?->user_id !== null) {
+            $this->notificarUsuario->executar($corrida->passageiro->user_id, 'Viagem concluída', "Valor da corrida: R$ {$pago}.");
+        }
     }
 
     public function cancelar(int $corridaId, string $quem, ?int $donoId, ?string $motivo, ?string $tipo = null, ?float $taxaConfirmada = null): Corrida
