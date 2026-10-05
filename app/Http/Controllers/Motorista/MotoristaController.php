@@ -41,6 +41,31 @@ class MotoristaController extends Controller
     }
 
     /**
+     * Números reais do motorista para o menu lateral. A taxa de finalização
+     * vem das corridas aceitas; a de aceitação fica nula porque as ofertas
+     * recusadas ou expiradas não são gravadas hoje.
+     */
+    public function estatisticas(Request $request): JsonResponse
+    {
+        $motorista = Motorista::where('user_id', $request->user()->id)->first();
+
+        if ($motorista === null) {
+            return response()->json(['message' => 'Cadastro de motorista não encontrado.'], 403);
+        }
+
+        $corridas = DB::table('corridas')->where('motorista_id', $motorista->id);
+        $aceitas = (clone $corridas)->whereNotNull('tempo_aceite')->count();
+        $finalizadas = (clone $corridas)->where('status_corrida', 'finalizada')->count();
+
+        return response()->json([
+            'corridas_aceitas' => $aceitas,
+            'corridas_finalizadas' => $finalizadas,
+            'taxa_finalizacao' => $aceitas > 0 ? round($finalizadas / $aceitas * 100) : null,
+            'taxa_aceitacao' => null,
+        ]);
+    }
+
+    /**
      * Cadastra e vincula um veículo à própria conta, sem confiar em IDs
      * de motorista enviados pelo aplicativo.
      */
