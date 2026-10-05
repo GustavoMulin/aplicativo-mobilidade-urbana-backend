@@ -41,6 +41,37 @@ class MotoristaController extends Controller
     }
 
     /**
+     * Ganhos reais do motorista: o do dia (corridas finalizadas hoje) e o saldo
+     * acumulado. Não há saques registrados, então o saldo é tudo que foi ganho.
+     */
+    public function ganhos(Request $request): JsonResponse
+    {
+        $motorista = Motorista::where('user_id', $request->user()->id)->first();
+
+        if ($motorista === null) {
+            return response()->json(['message' => 'Cadastro de motorista não encontrado.'], 403);
+        }
+
+        $finalizadas = DB::table('corridas')
+            ->join('corrida_financeiros', 'corrida_financeiros.corrida_id', '=', 'corridas.id')
+            ->where('corridas.motorista_id', $motorista->id)
+            ->where('corridas.status_corrida', 'finalizada');
+
+        $hoje = now();
+
+        return response()->json([
+            'data' => $hoje->translatedFormat('d/m'),
+            'ganhos_do_dia' => round((float) (clone $finalizadas)
+                ->whereDate('corridas.tempo_final', $hoje->toDateString())
+                ->sum('corrida_financeiros.valor_liquido_motorista'), 2),
+            'saldo' => round((float) (clone $finalizadas)->sum('corrida_financeiros.valor_liquido_motorista'), 2),
+            'corridas_hoje' => (clone $finalizadas)
+                ->whereDate('corridas.tempo_final', $hoje->toDateString())
+                ->count(),
+        ]);
+    }
+
+    /**
      * Números reais do motorista para o menu lateral. A finalização vem das
      * corridas aceitas; a aceitação, das corridas ofertadas (ofertas_motorista)
      * que ele acabou aceitando.

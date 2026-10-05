@@ -127,3 +127,48 @@ it('calcula a taxa de aceitação sobre as corridas que foram ofertadas', functi
         ->assertOk()
         ->assertJsonPath('taxa_aceitacao', 50);
 });
+
+it('soma os ganhos do dia e o saldo só com corridas finalizadas', function () {
+    $motorista = Motorista::create([
+        'user_id' => usuarioEstatistica('motorista')->id,
+        'status' => 'aprovado',
+        'cnh_numero' => null,
+        'cnh_categoria' => null,
+        'cnh_expiracao' => null,
+        'ear' => null,
+    ]);
+    $passageiro = Passageiro::create([
+        'user_id' => usuarioEstatistica('passageiro')->id,
+        'media_avaliacao' => null,
+    ]);
+
+    $criar = function (string $status, ?string $quando, float $liquido) use ($motorista, $passageiro) {
+        $corrida = Corrida::create([
+            'codigo_corrida' => 'GAN-'.Str::upper(Str::random(8)),
+            'motorista_id' => $motorista->id,
+            'passageiro_id' => $passageiro->id,
+            'status_corrida' => $status,
+            'tempo_solicitacao' => now()->subDay(),
+            'tempo_final' => $quando,
+            'metodo_pagamento' => 'dinheiro',
+            'status_pagamento' => 'pendente',
+        ]);
+        DB::table('corrida_financeiros')->insert([
+            'corrida_id' => $corrida->id,
+            'valor_liquido_motorista' => $liquido,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    };
+
+    $criar('finalizada', now()->toDateTimeString(), 10.50);
+    $criar('finalizada', now()->subDays(2)->toDateTimeString(), 20.00);
+    $criar('cancelada', now()->toDateTimeString(), 99.00);
+
+    $this->actingAs($motorista->user, 'jwt')
+        ->getJson('/api/motorista/me/ganhos')
+        ->assertOk()
+        ->assertJsonPath('ganhos_do_dia', 10.5)
+        ->assertJsonPath('saldo', 30.5)
+        ->assertJsonPath('corridas_hoje', 1);
+});
