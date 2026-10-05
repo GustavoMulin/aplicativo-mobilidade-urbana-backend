@@ -41,9 +41,9 @@ class MotoristaController extends Controller
     }
 
     /**
-     * Números reais do motorista para o menu lateral. A taxa de finalização
-     * vem das corridas aceitas; a de aceitação fica nula porque as ofertas
-     * recusadas ou expiradas não são gravadas hoje.
+     * Números reais do motorista para o menu lateral. A finalização vem das
+     * corridas aceitas; a aceitação, das corridas ofertadas (ofertas_motorista)
+     * que ele acabou aceitando.
      */
     public function estatisticas(Request $request): JsonResponse
     {
@@ -57,11 +57,19 @@ class MotoristaController extends Controller
         $aceitas = (clone $corridas)->whereNotNull('tempo_aceite')->count();
         $finalizadas = (clone $corridas)->where('status_corrida', 'finalizada')->count();
 
+        $ofertadas = DB::table('ofertas_motorista')->where('ofertas_motorista.motorista_id', $motorista->id);
+        $total = (clone $ofertadas)->count();
+        $aceitasDasOfertas = (clone $ofertadas)
+            ->join('corridas', 'corridas.id', '=', 'ofertas_motorista.corrida_id')
+            ->where('corridas.motorista_id', $motorista->id)
+            ->whereNotNull('corridas.tempo_aceite')
+            ->count();
+
         return response()->json([
             'corridas_aceitas' => $aceitas,
             'corridas_finalizadas' => $finalizadas,
             'taxa_finalizacao' => $aceitas > 0 ? round($finalizadas / $aceitas * 100) : null,
-            'taxa_aceitacao' => null,
+            'taxa_aceitacao' => $total > 0 ? round($aceitasDasOfertas / $total * 100) : null,
         ]);
     }
 

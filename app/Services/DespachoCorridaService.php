@@ -157,11 +157,22 @@ class DespachoCorridaService
         $reputacoes = $this->reputacoesDosPassageiros($corridas);
         $raios = $this->raiosDasTarifas($corridas);
 
-        return $corridas
+        $ofertas = $corridas
             ->map(fn (Corrida $corrida) => $this->montarOferta($corrida, $status, $reputacoes, $raios))
             ->filter()
             ->sortBy('distancia_ate_origem_km')
             ->values();
+
+        // base da taxa de aceitação: cada corrida conta uma vez por motorista
+        if ($ofertas->isNotEmpty()) {
+            DB::table('ofertas_motorista')->insertOrIgnore($ofertas->map(fn (array $oferta) => [
+                'motorista_id' => $motorista->id,
+                'corrida_id' => $oferta['corrida_id'],
+                'ofertada_em' => now(),
+            ])->all());
+        }
+
+        return $ofertas;
     }
 
     public function aceitar(Motorista $motorista, int $corridaId): Corrida
