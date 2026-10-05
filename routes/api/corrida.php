@@ -3,6 +3,7 @@
 // CODEX: 5 linhas alteradas neste arquivo; limita consultas repetidas da prévia de cancelamento.
 
 use App\Http\Controllers\Corrida\AvaliacoesCorridaController;
+use App\Http\Controllers\Corrida\CobrancaPixController;
 use App\Http\Controllers\Corrida\CorridaController;
 use App\Http\Controllers\Corrida\CorridaMotoristaController;
 use Illuminate\Support\Facades\Route;
@@ -36,6 +37,9 @@ Route::post('corridas/{corrida}/cancelar', [CorridaController::class, 'cancelar'
 Route::post('corridas/{corrida}/pagamento', [CorridaController::class, 'alterarPagamento']);
 Route::post('corridas/{corrida}/destino', [CorridaController::class, 'pedirNovoDestino'])->middleware('throttle:10,1');
 Route::delete('corridas/{corrida}/destino', [CorridaController::class, 'desistirDoNovoDestino']);
+Route::post('corridas/{corrida}/pix', [CobrancaPixController::class, 'criar']);
+Route::get('corridas/{corrida}/pix', [CobrancaPixController::class, 'consultar']);
+Route::post('corridas/{corrida}/pix/simular', [CobrancaPixController::class, 'simular']);
 
 Route::apiResource('corridas', CorridaController::class)->only(['index', 'store', 'show']);
 Route::post('precos-corrida', [CorridaController::class, 'precosCorrida'])->middleware('throttle:30,1');
