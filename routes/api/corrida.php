@@ -37,9 +37,9 @@ Route::post('corridas/{corrida}/cancelar', [CorridaController::class, 'cancelar'
 Route::post('corridas/{corrida}/pagamento', [CorridaController::class, 'alterarPagamento']);
 Route::post('corridas/{corrida}/destino', [CorridaController::class, 'pedirNovoDestino'])->middleware('throttle:10,1');
 Route::delete('corridas/{corrida}/destino', [CorridaController::class, 'desistirDoNovoDestino']);
-Route::post('corridas/{corrida}/pix', [CobrancaPixController::class, 'criar']);
+Route::post('corridas/{corrida}/pix', [CobrancaPixController::class, 'criar'])->middleware('throttle:10,1');
 Route::get('corridas/{corrida}/pix', [CobrancaPixController::class, 'consultar']);
-Route::post('corridas/{corrida}/pix/simular', [CobrancaPixController::class, 'simular']);
+Route::post('corridas/{corrida}/pix/simular', [CobrancaPixController::class, 'simular'])->middleware('throttle:10,1');
 
 Route::apiResource('corridas', CorridaController::class)->only(['index', 'store', 'show']);
 Route::post('precos-corrida', [CorridaController::class, 'precosCorrida'])->middleware('throttle:30,1');

@@ -66,6 +66,11 @@ class CobrancaPixService
     {
         $dados = $this->get('/v2/transparents/check', ['id' => $cobranca->charge_id]);
 
+        // a resposta precisa ser da mesma cobrança consultada
+        if (($dados['id'] ?? null) !== $cobranca->charge_id) {
+            throw new RuntimeException('A AbacatePay devolveu uma cobrança diferente da consultada.', 502);
+        }
+
         $cobranca->update([
             'status' => $dados['status'],
             'pago_em' => $dados['status'] === 'PAID' ? ($cobranca->pago_em ?? now()) : $cobranca->pago_em,
@@ -80,8 +85,8 @@ class CobrancaPixService
 
     public function simular(CobrancaPix $cobranca): CobrancaPix
     {
-        if (! $cobranca->dev_mode) {
-            throw new RuntimeException('Só é possível simular pagamento com chave de desenvolvimento.', 409);
+        if (! config('abacatepay.simulacao_habilitada') || ! $cobranca->dev_mode) {
+            throw new RuntimeException('Simulação de pagamento indisponível neste ambiente.', 409);
         }
 
         $this->post('/v2/transparents/simulate-payment', ['id' => $cobranca->charge_id]);

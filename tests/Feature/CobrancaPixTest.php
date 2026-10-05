@@ -13,6 +13,7 @@ uses(RefreshDatabase::class);
 
 beforeEach(function () {
     config(['abacatepay.api_key' => 'abc_dev_teste']);
+    config(['abacatepay.simulacao_habilitada' => true]);
     config(['abacatepay.base_url' => 'https://api.abacatepay.com']);
 });
 
@@ -147,4 +148,34 @@ it('recusa Pix para corrida não finalizada, paga em outro método ou de outro p
     $this->actingAs($passageiro->user, 'jwt')->postJson("/api/corridas/{$alheia->id}/pix")->assertNotFound();
 
     Http::assertNothingSent();
+});
+
+it('não simula pagamento quando a simulação está desligada', function () {
+    config(['abacatepay.simulacao_habilitada' => false]);
+    Http::fake(['api.abacatepay.com/v2/transparents/create' => Http::response(respostaCobranca())]);
+    $passageiro = passageiroPix();
+    $corrida = corridaPix($passageiro);
+    $this->actingAs($passageiro->user, 'jwt')->postJson("/api/corridas/{$corrida->id}/pix")->assertOk();
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->postJson("/api/corridas/{$corrida->id}/pix/simular")
+        ->assertStatus(409);
+
+    Http::assertNotSent(fn ($req) => str_contains($req->url(), 'simulate-payment'));
+});
+
+it('não confirma pagamento de outra cobrança devolvida pela AbacatePay', function () {
+    Http::fake([
+        'api.abacatepay.com/v2/transparents/create' => Http::response(respostaCobranca()),
+        'api.abacatepay.com/v2/transparents/check*' => Http::response(['success' => true, 'data' => ['id' => 'outra_cobranca', 'status' => 'PAID', 'expiresAt' => now()->addMinutes(15)->toIso8601String()], 'error' => null]),
+    ]);
+    $passageiro = passageiroPix();
+    $corrida = corridaPix($passageiro);
+    $this->actingAs($passageiro->user, 'jwt')->postJson("/api/corridas/{$corrida->id}/pix")->assertOk();
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->getJson("/api/corridas/{$corrida->id}/pix")
+        ->assertStatus(502);
+
+    expect($corrida->fresh()->status_pagamento)->toBe('pendente');
 });

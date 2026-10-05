@@ -5,4 +5,6 @@ return [
     'base_url' => env('ABACATEPAY_BASE_URL', 'https://api.abacatepay.com'),
     'api_key' => env('ABACATEPAY_API_KEY'),
     'validade_segundos' => (int) env('ABACATEPAY_VALIDADE_SEGUNDOS', 900),
+    // simulação de pagamento só existe em ambiente local/dev, nunca em produção
+    'simulacao_habilitada' => (bool) env('ABACATEPAY_SIMULACAO_HABILITADA', false),
 ];
