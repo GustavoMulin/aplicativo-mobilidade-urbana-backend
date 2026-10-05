@@ -89,7 +89,8 @@ class CobrancaPixService
             throw new RuntimeException('Simulação de pagamento indisponível neste ambiente.', 409);
         }
 
-        $this->post('/v2/transparents/simulate-payment', ['id' => $cobranca->charge_id]);
+        // a AbacatePay exige o id na query string, além do corpo
+        $this->post('/v2/transparents/simulate-payment?'.http_build_query(['id' => $cobranca->charge_id]), ['id' => $cobranca->charge_id]);
 
         return $this->sincronizar($cobranca);
     }

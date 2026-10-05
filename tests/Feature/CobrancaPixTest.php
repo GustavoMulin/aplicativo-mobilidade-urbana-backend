@@ -123,7 +123,7 @@ it('marca a corrida como paga quando a AbacatePay confirma o pagamento', functio
 it('simula o pagamento só com cobrança de desenvolvimento', function () {
     Http::fake([
         'api.abacatepay.com/v2/transparents/create' => Http::response(respostaCobranca()),
-        'api.abacatepay.com/v2/transparents/simulate-payment' => Http::response(['success' => true, 'data' => [], 'error' => null]),
+        'api.abacatepay.com/v2/transparents/simulate-payment*' => Http::response(['success' => true, 'data' => [], 'error' => null]),
         'api.abacatepay.com/v2/transparents/check*' => Http::response(['success' => true, 'data' => ['id' => 'pix_char_teste', 'status' => 'PAID', 'expiresAt' => now()->addMinutes(15)->toIso8601String()], 'error' => null]),
     ]);
     $passageiro = passageiroPix();
@@ -134,6 +134,9 @@ it('simula o pagamento só com cobrança de desenvolvimento', function () {
         ->postJson("/api/corridas/{$corrida->id}/pix/simular")
         ->assertOk()
         ->assertJsonPath('cobranca.status', 'PAID');
+
+    Http::assertSent(fn ($req) => str_contains($req->url(), 'simulate-payment?id=pix_char_teste')
+        && $req['id'] === 'pix_char_teste');
 });
 
 it('recusa Pix para corrida não finalizada, paga em outro método ou de outro passageiro', function () {
