@@ -1,5 +1,7 @@
 <?php
 
+// CODEX: 4 linhas alteradas; avaliação, embarque e cancelamentos. Remover após validação.
+
 namespace App\Http\Controllers\Corrida;
 
 use App\Http\Controllers\Controller;
@@ -9,6 +11,7 @@ use App\Models\CotacaoCorrida;
 use App\Models\Motorista;
 use App\Models\Passageiro;
 use App\Services\AjustarPontoEmbarqueService;
+use App\Services\AlterarCorridaService;
 use App\Services\CalcularPrecoCorridaService;
 use App\Services\ContabilizarEsperaCorridaService;
 use App\Services\DespachoCorridaService;
@@ -19,6 +22,7 @@ use App\Services\ObterTracadoRotaService;
 use App\Services\ResolverTarifaService;
 use App\Services\SimularCorridaNegociadaService;
 use App\Services\SolicitarCorridaService;
+use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -30,6 +34,7 @@ use RuntimeException;
 class CorridaController extends Controller
 {
     private const STATUS_ATIVOS = [
+        'aguardando_pagamento',
         'solicitada',
         'em_busca',
         'aceita',
@@ -192,9 +197,84 @@ class CorridaController extends Controller
         return response()->json($cancelada);
     }
 
+    public function alterarPagamento(Request $request, int $corrida, AlterarCorridaService $alterarCorrida): JsonResponse
+    {
+        $dados = $request->validate([
+            'metodo_pagamento' => 'required|in:dinheiro,cartao,pix',
+        ]);
+
+        return $this->alterarComoPassageiro($request, $corrida, $alterarCorrida,
+            fn (int $passageiroId) => $alterarCorrida->alterarPagamento($passageiroId, $corrida, $dados['metodo_pagamento']));
+    }
+
+    public function pedirNovoDestino(Request $request, int $corrida, AlterarCorridaService $alterarCorrida): JsonResponse
+    {
+        $dados = $request->validate([
+            'tipo' => 'sometimes|in:destino,parada',
+            'endereco' => 'required|string|max:255',
+            'latitude' => 'required|numeric|between:-90,90|not_in:0',
+            'longitude' => 'required|numeric|between:-180,180|not_in:0',
+            'itinerario' => 'sometimes|array|min:2|max:6',
+            'itinerario.*.endereco' => 'required_with:itinerario|string|max:255',
+            'itinerario.*.latitude' => 'required_with:itinerario|numeric|between:-90,90|not_in:0',
+            'itinerario.*.longitude' => 'required_with:itinerario|numeric|between:-180,180|not_in:0',
+        ]);
+
+        return $this->alterarComoPassageiro($request, $corrida, $alterarCorrida,
+            fn (int $passageiroId) => $alterarCorrida->pedirNovoDestino($passageiroId, $corrida, [
+                'tipo' => $dados['tipo'] ?? 'destino',
+                'endereco' => $dados['endereco'],
+                'latitude' => (float) $dados['latitude'],
+                'longitude' => (float) $dados['longitude'],
+                'itinerario' => isset($dados['itinerario'])
+                    ? array_map(fn (array $ponto): array => [
+                        'endereco' => $ponto['endereco'],
+                        'latitude' => (float) $ponto['latitude'],
+                        'longitude' => (float) $ponto['longitude'],
+                    ], $dados['itinerario'])
+                    : null,
+            ]));
+    }
+
+    public function desistirDoNovoDestino(Request $request, int $corrida, AlterarCorridaService $alterarCorrida): JsonResponse
+    {
+        return $this->alterarComoPassageiro($request, $corrida, $alterarCorrida,
+            fn (int $passageiroId) => $alterarCorrida->desistirDoNovoDestino($passageiroId, $corrida));
+    }
+
+    /**
+     * @param  callable(int): Corrida  $alterar
+     */
+    private function alterarComoPassageiro(Request $request, int $corrida, AlterarCorridaService $alterarCorrida, callable $alterar): JsonResponse
+    {
+        $passageiroId = Passageiro::where('user_id', $request->user()->id)->value('id');
+
+        if ($passageiroId === null) {
+            return response()->json(['message' => 'Corrida não encontrada.'], 404);
+        }
+
+        try {
+            $atualizada = $alterar((int) $passageiroId);
+        } catch (RuntimeException $excecao) {
+            $status = in_array($excecao->getCode(), [404, 409, 422, 429], true) ? (int) $excecao->getCode() : 422;
+
+            return response()->json(['message' => $excecao->getMessage()], $status);
+        }
+
+        $atualizada->setAttribute('pagamento_alteravel', $alterarCorrida->pagamentoAlteravel($atualizada));
+        $atualizada->setAttribute('destino_alteravel', $alterarCorrida->destinoAlteravel($atualizada));
+        $atualizada->setAttribute('alteracao_destino', $alterarCorrida->resumo($atualizada));
+
+        return response()->json($atualizada);
+    }
+
     public function minhaCorridaAtual(Request $request): JsonResponse
     {
-        $corrida = $this->doUsuario($request)
+        $dados = $request->validate([
+            'perfil' => 'sometimes|in:passageiro,motorista',
+        ]);
+
+        $corrida = $this->doUsuario($request, $dados['perfil'] ?? null)
             ->whereIn('status_corrida', self::STATUS_ATIVOS)
             ->with([
                 'motorista.user:id,name,foto,telefone',
@@ -220,12 +300,26 @@ class CorridaController extends Controller
             $corrida->passageiro?->user?->setAttribute('foto', null);
         }
 
+        if ($corrida->status_corrida === 'aceita' && $corrida->tempo_aceite !== null) {
+            $corrida->setAttribute(
+                'cancelamento_gratis_ate',
+                Carbon::parse($corrida->tempo_aceite)
+                    ->addSeconds(max(0, (int) config('precificacao.cancelamento_passageiro_carencia_segundos', 180)))
+                    ->toIso8601String()
+            );
+        }
+
         $posicao = $corrida->motorista_id === null
             ? null
             : $this->despachoCorridaService->posicaoDoMotorista($corrida->motorista_id);
 
+        $alterarCorrida = app(AlterarCorridaService::class);
+        $corrida->setAttribute('pagamento_alteravel', $alterarCorrida->pagamentoAlteravel($corrida));
+        $corrida->setAttribute('destino_alteravel', $alterarCorrida->destinoAlteravel($corrida));
+
         return response()->json([
             'corrida' => $corrida,
+            'alteracao_destino' => $alterarCorrida->resumo($corrida),
             'motorista_posicao' => $posicao,
             'chegada' => $this->estimarChegadaService->paraCorrida($corrida),
             'passageiro' => $this->passageiroParaOMotorista($corrida, $request),
@@ -337,21 +431,21 @@ class CorridaController extends Controller
     /**
      * @return Builder<Corrida>
      */
-    private function doUsuario(Request $request): Builder
+    private function doUsuario(Request $request, ?string $perfil = null): Builder
     {
         $usuarioId = $request->user()->id;
 
         $passageiroId = Passageiro::where('user_id', $usuarioId)->value('id');
         $motoristaId = Motorista::where('user_id', $usuarioId)->value('id');
 
-        return Corrida::query()->where(function (Builder $consulta) use ($passageiroId, $motoristaId) {
+        return Corrida::query()->where(function (Builder $consulta) use ($passageiroId, $motoristaId, $perfil) {
             $consulta->whereRaw('1 = 0');
 
-            if ($passageiroId !== null) {
+            if ($passageiroId !== null && $perfil !== 'motorista') {
                 $consulta->orWhere('passageiro_id', $passageiroId);
             }
 
-            if ($motoristaId !== null) {
+            if ($motoristaId !== null && $perfil !== 'passageiro') {
                 $consulta->orWhere('motorista_id', $motoristaId);
             }
         });
@@ -445,7 +539,7 @@ class CorridaController extends Controller
         // menos de 3 caracteres quase nunca traz resultado útil — evita
         // gastar requisição da Places API à toa
         if (mb_strlen(trim($endereco)) < 3) {
-            return response()->json([], 404);
+            return response()->json([]);
         }
 
         $chaveCache = 'busca-endereco:'.md5(mb_strtolower(trim($endereco)));
@@ -457,7 +551,7 @@ class CorridaController extends Controller
         );
 
         if (empty($resultados)) {
-            return response()->json([], 404);
+            return response()->json([]);
         }
 
         return response()->json($this->ordenarPorProximidade($resultados, $request));

@@ -1,5 +1,7 @@
 <?php
 
+// CODEX: 4 linhas alteradas; publica as rotas autenticadas dos veículos da própria conta.
+
 use App\Http\Controllers\Motorista\MotoristaCadastroController;
 use App\Http\Controllers\Motorista\MotoristaController;
 use App\Http\Controllers\Motorista\MotoristaDocumentoController;
@@ -12,6 +14,10 @@ Route::post('motorista/cadastro/documentos', [MotoristaCadastroController::class
 Route::delete('motorista/cadastro/documentos/{documento}', [MotoristaCadastroController::class, 'removerDocumento']);
 // atalho de desenvolvimento: ver MotoristaCadastroController::aprovarDev
 Route::post('motorista/cadastro/aprovar-dev', [MotoristaCadastroController::class, 'aprovarDev']);
+Route::get('motorista/me/veiculos', [MotoristaController::class, 'meusVeiculos']);
+Route::post('motorista/me/veiculos', [MotoristaController::class, 'cadastrarMeuVeiculo']);
+Route::get('motorista/me/estatisticas', [MotoristaController::class, 'estatisticas']);
+Route::get('motorista/me/ganhos', [MotoristaController::class, 'ganhos']);
 
 Route::get('motorista-veiculos/{motoristaId}', [MotoristaController::class, 'motoristaVeiculos']);
 Route::apiResource('motoristas', MotoristaController::class);
