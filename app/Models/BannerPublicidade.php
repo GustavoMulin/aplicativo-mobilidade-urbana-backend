@@ -11,7 +11,6 @@ class BannerPublicidade extends Model
     use HasFactory;
     use SoftDeletes;
     protected $fillable = [
-        'cidade_id',
         'titulo',
         'name',
         'type',
