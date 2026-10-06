@@ -11,11 +11,17 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 #[Fillable([
     'user_id',
-    'status',
-    'cnh_numero',
+    'nome',
+    'cpf',
+    'data_nascimento',
+    'numero_registro',
     'cnh_categoria',
+    'primeira_habilitacao',
+    'data_emissao',
     'cnh_expiracao',
     'ear',
+    'observacao',
+    'status',
 ])]
 
 class Motorista extends Model
@@ -24,6 +30,18 @@ class Motorista extends Model
     use HasFactory;
 
     use SoftDeletes;
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'data_nascimento' => 'date:Y-m-d',
+            'primeira_habilitacao' => 'date:Y-m-d',
+            'data_emissao' => 'date:Y-m-d',
+        ];
+    }
 
     /**
      * @return BelongsTo<User, $this>

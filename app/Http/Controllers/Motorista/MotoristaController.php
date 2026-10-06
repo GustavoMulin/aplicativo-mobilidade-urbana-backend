@@ -184,13 +184,17 @@ class MotoristaController extends Controller
     {
         $dados = $request->validate([
             'user_id' => 'required|integer|exists:users,id|unique:motoristas,user_id',
-            'cnh_numero' => 'required|string',
-            'cnh_categoria' => 'required|string',
-            'cnh_expiracao' => 'required|date',
-            'ear' => 'required|boolean',
+            'numero_registro' => 'nullable|string|max:20',
+            'cnh_categoria' => 'nullable|string',
+            'cnh_expiracao' => 'nullable|date',
+            'ear' => 'nullable|boolean',
+            'observacao' => 'nullable|string|max:5000',
         ]);
 
-        $motorista = Motorista::create($dados);
+        $motorista = Motorista::create([
+            ...$dados,
+            'status' => 'pendente',
+        ]);
 
         return response()->json([
             'success' => true,
@@ -215,10 +219,11 @@ class MotoristaController extends Controller
         $motorista = Motorista::findOrFail($motoristaid);
 
         $dados = $request->validate([
-            'cnh_numero' => 'sometimes|required|string',
+            'numero_registro' => 'sometimes|required|string|max:20',
             'cnh_categoria' => 'sometimes|required|string',
             'cnh_expiracao' => 'sometimes|required|date',
             'ear' => 'sometimes|required|boolean',
+            'observacao' => 'sometimes|nullable|string|max:5000',
         ]);
 
         $motorista->update($dados);
