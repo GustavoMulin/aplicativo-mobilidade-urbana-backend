@@ -77,6 +77,11 @@ class AlterarCorridaService
                 throw new RuntimeException('Durante a viagem só dá para trocar entre Pix e cartão.', 409);
             }
 
+            // o que já entrou pelo app não volta: em dinheiro o passageiro pagaria duas vezes
+            if (! in_array($metodo, self::PAGAMENTOS_DIGITAIS, true) && app(PagamentoCorridaService::class)->valorPago($corrida) > 0.009) {
+                throw new RuntimeException('Esta corrida já foi paga pelo app e não pode passar para dinheiro.', 409);
+            }
+
             $corrida->update([
                 'metodo_pagamento' => $metodo,
                 'pagamento_alterado_em' => now(),

@@ -494,6 +494,20 @@ it('pedido vencido confere também o Pix antigo antes de cancelar', function () 
         ->and($corrida->fresh()->status_corrida)->toBe('solicitada');
 });
 
+it('corrida já paga pelo app não troca para dinheiro', function () {
+    Http::fake();
+    $passageiro = passageiroPre();
+    $corrida = corridaTerminada($passageiro, 'aceita', 'pix', 20.0);
+    pixPago($corrida, 20.0);
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->postJson("/api/corridas/{$corrida->id}/pagamento", ['metodo_pagamento' => 'dinheiro'])
+        ->assertStatus(409)
+        ->assertJsonPath('message', 'Esta corrida já foi paga pelo app e não pode passar para dinheiro.');
+
+    expect($corrida->fresh()->metodo_pagamento)->toBe('pix');
+});
+
 it('crédito usado volta ao saldo quando a corrida é cancelada sem taxa', function () {
     Http::fake(['api.abacatepay.com/v2/transparents/create' => Http::response(respostaPix('PENDING', 1200))]);
     $passageiro = passageiroPre();
