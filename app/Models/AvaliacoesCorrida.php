@@ -1,5 +1,7 @@
 <?php
 
+// CODEX: 8 linhas alteradas; avaliação, embarque e cancelamentos. Remover após validação.
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
@@ -12,5 +14,11 @@ class AvaliacoesCorrida extends Model
         'tipo_usuario',
         'nota',
         'comentario',
+        'automatica',
     ];
+
+    protected function casts(): array
+    {
+        return ['automatica' => 'boolean'];
+    }
 }

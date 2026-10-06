@@ -1,3 +1,4 @@
+# CODEX: 21 linhas alteradas; avaliação, embarque e cancelamentos. Remover após validação.
 services:
     laravel.test:
         build:
@@ -5,14 +6,15 @@ services:
             dockerfile: Dockerfile
             args:
                 WWWGROUP: '${WWWGROUP}'
-        image: sail-8.5/app
+                TIMEZONE: '${CONTAINER_TIMEZONE:-America/Porto_Velho}'
+        image: 'sail-8.5/app'
         extra_hosts:
             - 'host.docker.internal:host-gateway'
         ports:
             - '${APP_PORT:-80}:80'
             - '${VITE_PORT:-5173}:${VITE_PORT:-5173}'
-            - '${REVERB_PORT:-8080}:${REVERB_PORT:-8080}'
         environment:
+            TZ: '${CONTAINER_TIMEZONE:-America/Porto_Velho}'
             WWWUSER: '${WWWUSER}'
             LARAVEL_SAIL: 1
             XDEBUG_MODE: '${SAIL_XDEBUG_MODE:-off}'
@@ -23,10 +25,55 @@ services:
         networks:
             - sail
         depends_on:
+            - mysql
             - valkey
             - rustfs
             - mailpit
-            - pgsql
+    scheduler:
+        build:
+            context: ./docker/8.5-nginx
+            dockerfile: Dockerfile
+            args:
+                WWWGROUP: '${WWWGROUP}'
+                TIMEZONE: '${CONTAINER_TIMEZONE:-America/Porto_Velho}'
+        image: 'sail-8.5/app'
+        command: php artisan schedule:work
+        environment:
+            TZ: '${CONTAINER_TIMEZONE:-America/Porto_Velho}'
+            WWWUSER: '${WWWUSER}'
+            LARAVEL_SAIL: 1
+        volumes:
+            - '.:/var/www/html'
+        networks:
+            - sail
+        depends_on:
+            - mysql
+            - valkey
+    mysql:
+        image: 'mysql:8.4'
+        ports:
+            - '${FORWARD_DB_PORT:-3306}:3306'
+        environment:
+            MYSQL_ROOT_PASSWORD: '${DB_PASSWORD}'
+            MYSQL_ROOT_HOST: '%'
+            MYSQL_DATABASE: '${DB_DATABASE}'
+            MYSQL_USER: '${DB_USERNAME}'
+            MYSQL_PASSWORD: '${DB_PASSWORD}'
+            MYSQL_ALLOW_EMPTY_PASSWORD: 1
+            MYSQL_EXTRA_OPTIONS: '${MYSQL_EXTRA_OPTIONS:-}'
+        volumes:
+            - 'sail-mysql:/var/lib/mysql'
+            - './docker/mysql/create-testing-database.sh:/docker-entrypoint-initdb.d/10-create-testing-database.sh'
+        networks:
+            - sail
+        healthcheck:
+            test:
+                - CMD
+                - mysqladmin
+                - ping
+                - '-p${DB_PASSWORD}'
+            retries: 3
+            timeout: 5s
     valkey:
         image: 'valkey/valkey:alpine'
         ports:
@@ -79,31 +126,6 @@ services:
             - '${FORWARD_MAILPIT_DASHBOARD_PORT:-8025}:8025'
         networks:
             - sail
-    pgsql:
-        image: 'postgres:18-alpine'
-        ports:
-            - '${FORWARD_DB_PORT:-5432}:5432'
-        environment:
-            PGPASSWORD: '${DB_PASSWORD:-secret}'
-            POSTGRES_DB: '${DB_DATABASE}'
-            POSTGRES_USER: '${DB_USERNAME}'
-            POSTGRES_PASSWORD: '${DB_PASSWORD:-secret}'
-        volumes:
-            - 'sail-pgsql:/var/lib/postgresql'
-            - './vendor/laravel/sail/database/pgsql/create-testing-database.sql:/docker-entrypoint-initdb.d/10-create-testing-database.sql'
-        networks:
-            - sail
-        healthcheck:
-            test:
-                - CMD
-                - pg_isready
-                - '-q'
-                - '-d'
-                - '${DB_DATABASE}'
-                - '-U'
-                - '${DB_USERNAME}'
-            retries: 3
-            timeout: 5s
 networks:
     sail:
         driver: bridge
@@ -113,6 +135,4 @@ volumes:
     sail-valkey:
         driver: local
     sail-rustfs:
-        driver: local
-    sail-pgsql:
         driver: local

@@ -2,15 +2,107 @@
 
 namespace App\Http\Controllers\Motorista;
 
+// CODEX: 92 linhas alteradas; adiciona listagem e cadastro seguro dos veículos do motorista autenticado.
+
 use App\Http\Controllers\Controller;
 use App\Models\Motorista;
 use App\Models\MotoristaVeiculo;
+use App\Models\StatusBusca;
+use App\Models\Veiculo;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class MotoristaController extends Controller
 {
+    /**
+     * Lista somente os veículos vinculados ao motorista autenticado.
+     */
+    public function meusVeiculos(Request $request): JsonResponse
+    {
+        $motorista = Motorista::where('user_id', $request->user()->id)->first();
+
+        if ($motorista === null) {
+            return response()->json(['message' => 'Cadastro de motorista não encontrado.'], 403);
+        }
+
+        $veiculos = MotoristaVeiculo::query()
+            ->where('motorista_id', $motorista->id)
+            ->with('veiculo')
+            ->orderByDesc('id')
+            ->get()
+            ->pluck('veiculo')
+            ->filter()
+            ->values();
+
+        return response()->json(['data' => $veiculos]);
+    }
+
+    /**
+     * Cadastra e vincula um veículo à própria conta, sem confiar em IDs
+     * de motorista enviados pelo aplicativo.
+     */
+    public function cadastrarMeuVeiculo(Request $request): JsonResponse
+    {
+        $request->merge([
+            'marca' => trim((string) $request->input('marca')),
+            'modelo' => trim((string) $request->input('modelo')),
+            'cor' => trim((string) $request->input('cor')),
+            'placa' => strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '', (string) $request->input('placa'))),
+            'renavam' => preg_replace('/\D/', '', (string) $request->input('renavam')),
+            'categoria' => strtolower(trim((string) $request->input('categoria'))),
+            'uf' => strtoupper(trim((string) $request->input('uf'))),
+        ]);
+
+        $anoMaximo = now()->year + 1;
+        $dados = $request->validate([
+            'marca' => 'required|string|max:60',
+            'modelo' => 'required|string|max:80',
+            'ano_fabricacao' => "required|integer|between:1900,{$anoMaximo}",
+            'ano_modelo' => "required|integer|between:1900,{$anoMaximo}",
+            'cor' => 'required|string|max:40',
+            'placa' => ['required', 'string', 'regex:/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/', Rule::unique('veiculos', 'placa')],
+            'renavam' => ['required', 'digits:11', Rule::unique('veiculos', 'renavam')],
+            'categoria' => 'required|string|in:carro,moto,bicicleta',
+            'uf' => 'required|string|size:2',
+        ], [
+            'placa.regex' => 'Informe uma placa brasileira válida.',
+            'placa.unique' => 'Esta placa já está cadastrada.',
+            'renavam.digits' => 'O RENAVAM deve ter 11 números.',
+            'renavam.unique' => 'Este RENAVAM já está cadastrado.',
+        ]);
+
+        $motorista = Motorista::where('user_id', $request->user()->id)->first();
+
+        if ($motorista === null) {
+            return response()->json(['message' => 'Cadastro de motorista não encontrado.'], 403);
+        }
+
+        $veiculo = DB::transaction(function () use ($dados, $motorista): Veiculo {
+            $veiculo = Veiculo::create([
+                ...$dados,
+                'status' => 'aprovado',
+            ]);
+
+            MotoristaVeiculo::create([
+                'motorista_id' => $motorista->id,
+                'veiculo_id' => $veiculo->id,
+            ]);
+
+            StatusBusca::where('motorista_id', $motorista->id)
+                ->update(['veiculo_id' => $veiculo->id]);
+
+            return $veiculo;
+        });
+
+        return response()->json([
+            'message' => 'Veículo adicionado com sucesso.',
+            'data' => $veiculo,
+        ], 201);
+    }
+
     /**
      * Display a listing of the resource.
      *
