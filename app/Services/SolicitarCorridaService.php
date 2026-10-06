@@ -46,6 +46,10 @@ class SolicitarCorridaService
         $prePago = $pagamento->ehPrePago($metodoPagamento);
 
         $corrida = DB::transaction(function () use ($cotacao, $categoria, $passageiro, $metodoPagamento, $prePago, $pagamento) {
+            // trava o passageiro: dois pedidos simultâneos não criam duas
+            // corridas ativas nem gastam o mesmo crédito
+            Passageiro::whereKey($passageiro->id)->lockForUpdate()->first();
+
             $travada = CotacaoCorrida::whereKey($cotacao->getKey())->lockForUpdate()->first();
 
             if ($travada === null || $travada->consumida()) {

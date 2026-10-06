@@ -10,6 +10,7 @@ use App\Models\CobrancaPix;
 use App\Models\Corrida;
 use App\Models\CorridaFinanceiro;
 use App\Models\MovimentoCredito;
+use App\Models\Passageiro;
 use App\Support\Avisar;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -58,7 +59,10 @@ class PagamentoCorridaService
     }
 
     /**
-     * Quanto já entrou: cobranças pagas e não estornadas, mais crédito usado.
+     * Quanto já entrou: cobranças pagas e não estornadas, mais o crédito usado
+     * nesta corrida, menos o crédito já devolvido por ela. Contar o crédito
+     * devolvido aqui torna a liquidação idempotente: liquidar de novo não
+     * credita a mesma sobra duas vezes.
      */
     public function valorPago(Corrida $corrida): float
     {
@@ -70,9 +74,9 @@ class PagamentoCorridaService
             ->where('status', 'PAID')
             ->whereNull('estornado_em')
             ->sum('valor_centavos');
-        $credito = (float) ($this->financeiro($corrida)->credito_aplicado ?? 0);
+        $creditoLiquido = -(float) MovimentoCredito::where('corrida_id', $corrida->id)->sum('valor');
 
-        return round(($pix + $cartao) / 100 + $credito, 2);
+        return round(($pix + $cartao) / 100 + $creditoLiquido, 2);
     }
 
     public function valorDevido(Corrida $corrida): float
@@ -91,6 +95,9 @@ class PagamentoCorridaService
      */
     public function aplicarCredito(Corrida $corrida, float $valor): float
     {
+        // trava o passageiro: dois pedidos simultâneos não gastam o mesmo saldo
+        Passageiro::whereKey($corrida->passageiro_id)->lockForUpdate()->first();
+
         $uso = round(min($this->saldoCredito((int) $corrida->passageiro_id), $valor), 2);
 
         if ($uso <= self::TOLERANCIA) {
@@ -179,8 +186,19 @@ class PagamentoCorridaService
      */
     public function liquidar(Corrida $corrida): void
     {
-        $corrida->refresh();
+        // trava a corrida: agendador, webhook e consulta do app podem liquidar
+        // ao mesmo tempo, e cada um estornaria ou creditaria de novo
+        DB::transaction(function () use ($corrida) {
+            $travada = Corrida::whereKey($corrida->id)->lockForUpdate()->first();
 
+            if ($travada !== null) {
+                $this->liquidarTravada($travada);
+            }
+        });
+    }
+
+    private function liquidarTravada(Corrida $corrida): void
+    {
         if (! in_array($corrida->status_corrida, ['finalizada', 'cancelada'], true)) {
             return;
         }
@@ -214,6 +232,11 @@ class PagamentoCorridaService
             }
 
             $this->creditar($corrida, -$saldo, "Sobra da corrida {$corrida->codigo_corrida}");
+        }
+
+        // corrida já estornada continua estornada se for liquidada de novo
+        if ($cobrado <= self::TOLERANCIA && $corrida->status_pagamento === 'estornado') {
+            return;
         }
 
         $corrida->update(['status_pagamento' => $cobrado <= self::TOLERANCIA ? 'sem_cobranca' : 'pago']);
@@ -302,12 +325,11 @@ class PagamentoCorridaService
             $this->estornar($corrida, $cartao->valor_centavos, fn () => $this->abacatePay->estornarCheckout($cartao->checkout_id), $cartao);
         }
 
-        $financeiro = $this->financeiro($corrida);
-        $credito = round((float) ($financeiro->credito_aplicado ?? 0), 2);
+        // crédito usado na corrida volta para o saldo (o extrato já fica zerado nela)
+        $creditoUsado = round(-(float) MovimentoCredito::where('corrida_id', $corrida->id)->sum('valor'), 2);
 
-        if ($credito > self::TOLERANCIA) {
-            $this->creditar($corrida, $credito, "Crédito devolvido da corrida {$corrida->codigo_corrida}");
-            CorridaFinanceiro::where('corrida_id', $corrida->id)->update(['credito_aplicado' => 0]);
+        if ($creditoUsado > self::TOLERANCIA) {
+            $this->creditar($corrida, $creditoUsado, "Crédito devolvido da corrida {$corrida->codigo_corrida}");
         }
     }
 
@@ -323,12 +345,32 @@ class PagamentoCorridaService
             $estornarNaApi();
             $cobranca->update(['estornado_em' => now()]);
         } catch (RuntimeException $erro) {
+            $cobranca->update(['estornado_em' => now()]);
+
+            // falha porque já estava estornada (ex.: outra liquidação chegou
+            // antes): não vira crédito, senão o passageiro recebe em dobro
+            if ($this->jaEstornadaNaAbacatePay($cobranca)) {
+                return;
+            }
+
             Log::warning('Estorno na AbacatePay falhou; valor convertido em crédito.', [
                 'corrida_id' => $corrida->id,
                 'erro' => $erro->getMessage(),
             ]);
-            $cobranca->update(['estornado_em' => now()]);
             $this->creditar($corrida, $centavos / 100, "Estorno da corrida {$corrida->codigo_corrida} em crédito");
+        }
+    }
+
+    private function jaEstornadaNaAbacatePay(CobrancaPix|CobrancaCartao $cobranca): bool
+    {
+        try {
+            $dados = $cobranca instanceof CobrancaPix
+                ? $this->abacatePay->get('/v2/transparents/check', ['id' => $cobranca->charge_id])
+                : $this->abacatePay->get('/v2/checkouts/get', ['id' => $cobranca->checkout_id]);
+
+            return ($dados['status'] ?? null) === 'REFUNDED';
+        } catch (RuntimeException) {
+            return false;
         }
     }
 

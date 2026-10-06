@@ -367,3 +367,66 @@ it('no pré-pagamento só aceita o método escolhido no pedido', function () {
         ->postJson("/api/corridas/{$corridaId}/cartao")
         ->assertStatus(409);
 });
+
+it('liquidar de novo não credita a mesma sobra duas vezes', function () {
+    Http::fake();
+    $passageiro = passageiroPre();
+    $corrida = corridaTerminada($passageiro, 'cancelada', 'pix', 4.0, [
+        'tipo_cancelamento' => 'cancelamento_com_taxa',
+        '__taxa' => 4.0,
+    ]);
+    pixPago($corrida, 20.0);
+    $servico = app(PagamentoCorridaService::class);
+
+    $servico->liquidar($corrida);
+    $servico->liquidar($corrida);
+    $servico->liquidar($corrida);
+
+    expect($servico->saldoCredito($passageiro->id))->toBe(16.0);
+});
+
+it('estorno que falha por já ter sido feito não vira crédito', function () {
+    Http::fake([
+        'api.abacatepay.com/v2/transparents/refund' => Http::response(['success' => false, 'error' => 'Esta cobrança já foi reembolsada.'], 400),
+        'api.abacatepay.com/v2/transparents/check*' => Http::response(['success' => true, 'error' => null, 'data' => ['id' => 'pix_char_pago', 'status' => 'REFUNDED']]),
+    ]);
+    $passageiro = passageiroPre();
+    $corrida = corridaTerminada($passageiro, 'cancelada', 'pix', 20.0, ['cancelado_por' => 'motorista']);
+    pixPago($corrida, 20.0);
+    $servico = app(PagamentoCorridaService::class);
+
+    $servico->liquidar($corrida);
+    $servico->liquidar($corrida);
+
+    expect($corrida->fresh()->status_pagamento)->toBe('estornado')
+        ->and($servico->saldoCredito($passageiro->id))->toBe(0.0);
+});
+
+it('estorno que falha de verdade vira crédito uma única vez', function () {
+    Http::fake([
+        'api.abacatepay.com/v2/transparents/refund' => Http::response(['success' => false, 'error' => 'indisponível'], 500),
+        'api.abacatepay.com/v2/transparents/check*' => Http::response(['success' => true, 'error' => null, 'data' => ['id' => 'pix_char_pago', 'status' => 'PAID']]),
+    ]);
+    $passageiro = passageiroPre();
+    $corrida = corridaTerminada($passageiro, 'cancelada', 'pix', 20.0, ['cancelado_por' => 'motorista']);
+    pixPago($corrida, 20.0);
+    $servico = app(PagamentoCorridaService::class);
+
+    $servico->liquidar($corrida);
+    $servico->liquidar($corrida);
+
+    expect($servico->saldoCredito($passageiro->id))->toBe(20.0);
+});
+
+it('crédito usado volta ao saldo quando a corrida é cancelada sem taxa', function () {
+    Http::fake(['api.abacatepay.com/v2/transparents/create' => Http::response(respostaPix('PENDING', 1200))]);
+    $passageiro = passageiroPre();
+    MovimentoCredito::create(['passageiro_id' => $passageiro->id, 'valor' => 8, 'descricao' => 'teste']);
+    $corridaId = pedirCorrida($passageiro, 'pix', 20.0)->json('id');
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->postJson("/api/corridas/{$corridaId}/cancelar", ['motivo' => 'desisti'])
+        ->assertOk();
+
+    expect(app(PagamentoCorridaService::class)->saldoCredito($passageiro->id))->toBe(8.0);
+});
