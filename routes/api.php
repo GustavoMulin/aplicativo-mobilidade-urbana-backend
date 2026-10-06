@@ -4,16 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Route;
 
-// Rotas organizadas por domínio em routes/api/*.php, espelhando as pastas
-// de App\Http\Controllers\<Dominio>. Cada arquivo só declara Route::...,
-// sem se preocupar com middleware — ele herda o grupo em que é incluído
-// aqui embaixo.
-
-// auth.php cuida do próprio agrupamento (parte pública com throttle, parte
-// autenticada com auth:jwt), por isso é incluído fora do grupo abaixo.
 require __DIR__.'/api/auth.php';
-
-// webhooks de terceiros: públicos, autenticados pelo segredo de cada provedor
 require __DIR__.'/api/webhooks.php';
 
 Route::middleware('auth:jwt')->group(function () {
