@@ -30,6 +30,12 @@ class AlterarCorridaService
 
     private const PAGAMENTOS_DIGITAIS = ['pix', 'cartao'];
 
+    // mesmo limite da tela de paradas do app
+    private const MAX_PARADAS = 4;
+
+    // cada pedido recalcula a rota na API paga do Google
+    private const MAX_ALTERACOES_POR_CORRIDA = 6;
+
     public function __construct(
         protected EstimarRotaService $estimarRotaService,
         protected CalcularPrecoCorridaService $calcularPrecoCorridaService,
@@ -115,10 +121,38 @@ class AlterarCorridaService
                 );
             }
 
+            if ($corrida->alteracoesDestino()->count() >= self::MAX_ALTERACOES_POR_CORRIDA) {
+                throw new RuntimeException('O trajeto desta corrida já foi alterado muitas vezes.', 429);
+            }
+
             $tipo = $destino['tipo'] ?? 'destino';
             $itinerario = $destino['itinerario'] ?? null;
+            $paradasAtuais = $corrida->corrida_destinos()->where('tipo', 'parada')->orderBy('ordem')->get();
+
+            $totalDeParadas = $itinerario !== null
+                ? count($itinerario) - 2
+                : $paradasAtuais->count() + ($tipo === 'parada' ? 1 : 0);
+
+            if ($totalDeParadas > self::MAX_PARADAS) {
+                throw new RuntimeException('A corrida já tem o máximo de '.self::MAX_PARADAS.' paradas.', 422);
+            }
 
             if ($itinerario !== null) {
+                // parada já feita fica no começo do trajeto, na ordem em que foi
+                // feita: tirá-la ou mudá-la de lugar baratearia o que já rodou
+                $feitas = $paradasAtuais->whereNotNull('concluida_em')->values();
+
+                foreach ($feitas as $indice => $feita) {
+                    $ponto = $itinerario[$indice + 1] ?? null;
+                    $mesmoPonto = $ponto !== null
+                        && abs((float) $ponto['latitude'] - (float) $feita->latitude) < 0.00001
+                        && abs((float) $ponto['longitude'] - (float) $feita->longitude) < 0.00001;
+
+                    if (! $mesmoPonto || $indice + 1 === count($itinerario) - 1) {
+                        throw new RuntimeException('As paradas já feitas continuam no trajeto, na mesma ordem.', 422);
+                    }
+                }
+
                 $origem = $corrida->corrida_destinos()->where('tipo', 'origem')->first();
 
                 if ($origem === null) {

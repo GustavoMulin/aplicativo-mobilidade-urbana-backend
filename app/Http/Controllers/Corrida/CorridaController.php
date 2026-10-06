@@ -256,7 +256,7 @@ class CorridaController extends Controller
         try {
             $atualizada = $alterar((int) $passageiroId);
         } catch (RuntimeException $excecao) {
-            $status = in_array($excecao->getCode(), [404, 409, 422], true) ? (int) $excecao->getCode() : 422;
+            $status = in_array($excecao->getCode(), [404, 409, 422, 429], true) ? (int) $excecao->getCode() : 422;
 
             return response()->json(['message' => $excecao->getMessage()], $status);
         }
