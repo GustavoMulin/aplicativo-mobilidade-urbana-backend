@@ -11,6 +11,7 @@ use App\Models\CorridaFinanceiro;
 use App\Models\Motorista;
 use App\Models\Tarifa;
 use App\Support\Avisar;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
@@ -138,20 +139,7 @@ class AlterarCorridaService
             }
 
             if ($itinerario !== null) {
-                // parada já feita fica no começo do trajeto, na ordem em que foi
-                // feita: tirá-la ou mudá-la de lugar baratearia o que já rodou
-                $feitas = $paradasAtuais->whereNotNull('concluida_em')->values();
-
-                foreach ($feitas as $indice => $feita) {
-                    $ponto = $itinerario[$indice + 1] ?? null;
-                    $mesmoPonto = $ponto !== null
-                        && abs((float) $ponto['latitude'] - (float) $feita->latitude) < 0.00001
-                        && abs((float) $ponto['longitude'] - (float) $feita->longitude) < 0.00001;
-
-                    if (! $mesmoPonto || $indice + 1 === count($itinerario) - 1) {
-                        throw new RuntimeException('As paradas já feitas continuam no trajeto, na mesma ordem.', 422);
-                    }
-                }
+                $this->paradasFeitasNoInicio($corrida, $itinerario);
 
                 $origem = $corrida->corrida_destinos()->where('tipo', 'origem')->first();
 
@@ -239,6 +227,15 @@ class AlterarCorridaService
                 throw new RuntimeException('Este pedido de troca de destino não está mais valendo.', 409);
             }
 
+            if ($aceitar && $pendente->itinerario !== null) {
+                // o motorista pode ter feito outra parada depois do pedido
+                try {
+                    $this->paradasFeitasNoInicio($corrida, $pendente->itinerario);
+                } catch (RuntimeException) {
+                    throw new RuntimeException('O trajeto mudou desde o pedido. O passageiro precisa editar de novo.', 409);
+                }
+            }
+
             if ($aceitar) {
                 // recalcula na hora do aceite: a espera pode ter mudado o total
                 $orcamento = $this->orcar($corrida, [
@@ -318,6 +315,37 @@ class AlterarCorridaService
                 : null,
             'respondida_em' => $ultima->respondida_em?->toIso8601String(),
         ];
+    }
+
+    /**
+     * Paradas já feitas precisam abrir o itinerário, na ordem em que foram
+     * feitas: tirá-las ou mudá-las de lugar baratearia o que já rodou.
+     *
+     * @param  array<int, array{endereco: string, latitude: float, longitude: float}>  $itinerario
+     * @return Collection<int, CorridaDestino>
+     */
+    private function paradasFeitasNoInicio(Corrida $corrida, array $itinerario): Collection
+    {
+        $feitas = $corrida->corrida_destinos()
+            ->where('tipo', 'parada')
+            ->whereNotNull('concluida_em')
+            ->orderBy('ordem')
+            ->get()
+            ->values();
+
+        foreach ($feitas as $indice => $feita) {
+            $ponto = $itinerario[$indice + 1] ?? null;
+            $ehDestino = $indice + 1 >= count($itinerario) - 1;
+            $mesmoPonto = $ponto !== null
+                && abs((float) $ponto['latitude'] - (float) $feita->latitude) < 0.00001
+                && abs((float) $ponto['longitude'] - (float) $feita->longitude) < 0.00001;
+
+            if ($ehDestino || ! $mesmoPonto) {
+                throw new RuntimeException('As paradas já feitas continuam no trajeto, na mesma ordem.', 422);
+            }
+        }
+
+        return $feitas;
     }
 
     private function corridaDoPassageiro(int $passageiroId, int $corridaId): Corrida
@@ -505,15 +533,9 @@ class AlterarCorridaService
             throw new RuntimeException('Informe ao menos origem e destino para atualizar o trajeto.', 422);
         }
 
-        // parada já feita continua feita: senão o motorista teria de
-        // confirmá-la de novo e a rota do passageiro voltaria a ela
-        $chave = fn (float|string $latitude, float|string $longitude): string => sprintf('%.5f,%.5f', (float) $latitude, (float) $longitude);
-        $concluidas = $corrida->corrida_destinos()
-            ->where('tipo', 'parada')
-            ->whereNotNull('concluida_em')
-            ->get()
-            ->mapWithKeys(fn (CorridaDestino $parada) => [$chave($parada->latitude, $parada->longitude) => $parada->concluida_em])
-            ->all();
+        // parada já feita continua feita (senão o motorista teria de
+        // confirmá-la de novo); elas abrem o itinerário, na mesma ordem
+        $feitas = $this->paradasFeitasNoInicio($corrida, $itinerario);
 
         $corrida->corrida_destinos()->where('tipo', '!=', 'origem')->delete();
 
@@ -526,7 +548,7 @@ class AlterarCorridaService
                 'endereco' => $ponto['endereco'],
                 'latitude' => $ponto['latitude'],
                 'longitude' => $ponto['longitude'],
-                'concluida_em' => $ultimo ? null : ($concluidas[$chave($ponto['latitude'], $ponto['longitude'])] ?? null),
+                'concluida_em' => $feitas->get($indice)?->concluida_em,
             ]);
         }
     }
