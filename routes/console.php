@@ -22,3 +22,9 @@ Schedule::call(fn () => app(PagamentoCorridaService::class)->expirarPagamentosVe
     ->name('corridas:expirar-pagamentos')
     ->everyMinute()
     ->withoutOverlapping();
+
+// estornos que ficaram sem resposta da AbacatePay
+Schedule::call(fn () => app(PagamentoCorridaService::class)->reprocessarEstornosPendentes())
+    ->name('pagamentos:reprocessar-estornos')
+    ->everyFiveMinutes()
+    ->withoutOverlapping();

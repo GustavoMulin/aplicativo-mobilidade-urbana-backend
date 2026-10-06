@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Events\CorridaAtualizada;
 use App\Events\CorridasDisponiveisAlteradas;
+use App\Exceptions\AbacatePaySemRespostaException;
 use App\Exceptions\PagamentoPendenteException;
 use App\Models\CobrancaCartao;
 use App\Models\CobrancaPix;
@@ -225,8 +226,9 @@ class PagamentoCorridaService
 
         if ($saldo < -self::TOLERANCIA) {
             if ($cobrado <= self::TOLERANCIA) {
-                $this->estornarTudo($corrida);
-                $corrida->update(['status_pagamento' => 'estornado']);
+                // estorno sem resposta da AbacatePay fica pendente e o agendador tenta de novo
+                $concluido = $this->estornarTudo($corrida);
+                $corrida->update(['status_pagamento' => $concluido ? 'estornado' : 'estorno_pendente']);
 
                 return;
             }
@@ -270,7 +272,10 @@ class PagamentoCorridaService
             if ($this->pagamentoConfirmadoNaAbacatePay((int) $corridaId)) {
                 $this->aoConfirmarPagamento((int) $corridaId);
 
-                continue;
+                // pago só em parte continua aguardando: cancela e devolve o que entrou
+                if (Corrida::whereKey($corridaId)->value('status_corrida') !== 'aguardando_pagamento') {
+                    continue;
+                }
             }
 
             $corrida = DB::transaction(function () use ($corridaId) {
@@ -299,30 +304,80 @@ class PagamentoCorridaService
         return $canceladas;
     }
 
+    /**
+     * Tenta de novo os estornos que ficaram sem resposta da AbacatePay.
+     */
+    public function reprocessarEstornosPendentes(): int
+    {
+        $corridas = Corrida::where('status_pagamento', 'estorno_pendente')->orderBy('id')->limit(50)->get();
+
+        foreach ($corridas as $corrida) {
+            $this->liquidarSemQuebrar($corrida);
+        }
+
+        return $corridas->count();
+    }
+
+    /**
+     * Confere todas as cobranças abertas do pedido, não só a última: um Pix
+     * antigo ainda pode ter sido pago.
+     */
     private function pagamentoConfirmadoNaAbacatePay(int $corridaId): bool
     {
-        try {
-            $pix = CobrancaPix::where('corrida_id', $corridaId)->latest('id')->first();
-            if ($pix !== null && app(CobrancaPixService::class)->sincronizar($pix, false)->status === 'PAID') {
+        $pixes = CobrancaPix::where('corrida_id', $corridaId)
+            ->whereIn('status', ['PENDING', 'PAID'])
+            ->whereNull('estornado_em')
+            ->get();
+
+        foreach ($pixes as $pix) {
+            if ($this->pagaOuSincronizada($pix, fn () => app(CobrancaPixService::class)->sincronizar($pix, false)->status)) {
                 return true;
             }
+        }
 
-            $cartao = CobrancaCartao::where('corrida_id', $corridaId)->latest('id')->first();
+        $cartoes = CobrancaCartao::where('corrida_id', $corridaId)
+            ->whereIn('status', ['PENDING', 'PAID'])
+            ->whereNull('estornado_em')
+            ->get();
 
-            return $cartao !== null && app(CobrancaCartaoService::class)->sincronizar($cartao, false)->status === 'PAID';
+        foreach ($cartoes as $cartao) {
+            if ($this->pagaOuSincronizada($cartao, fn () => app(CobrancaCartaoService::class)->sincronizar($cartao, false)->status)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param  callable(): string  $sincronizar
+     */
+    private function pagaOuSincronizada(CobrancaPix|CobrancaCartao $cobranca, callable $sincronizar): bool
+    {
+        if ($cobranca->status === 'PAID') {
+            return true;
+        }
+
+        try {
+            return $sincronizar() === 'PAID';
         } catch (Throwable) {
             return false;
         }
     }
 
-    private function estornarTudo(Corrida $corrida): void
+    /**
+     * @return bool false quando algum estorno ficou sem resposta e precisa ser refeito
+     */
+    private function estornarTudo(Corrida $corrida): bool
     {
+        $concluido = true;
+
         foreach (CobrancaPix::where('corrida_id', $corrida->id)->where('status', 'PAID')->whereNull('estornado_em')->get() as $pix) {
-            $this->estornar($corrida, $pix->valor_centavos, fn () => $this->abacatePay->estornarPix($pix->charge_id), $pix);
+            $concluido = $this->estornar($corrida, $pix->valor_centavos, fn () => $this->abacatePay->estornarPix($pix->charge_id), $pix) && $concluido;
         }
 
         foreach (CobrancaCartao::where('corrida_id', $corrida->id)->where('status', 'PAID')->whereNull('estornado_em')->get() as $cartao) {
-            $this->estornar($corrida, $cartao->valor_centavos, fn () => $this->abacatePay->estornarCheckout($cartao->checkout_id), $cartao);
+            $concluido = $this->estornar($corrida, $cartao->valor_centavos, fn () => $this->abacatePay->estornarCheckout($cartao->checkout_id), $cartao) && $concluido;
         }
 
         // crédito usado na corrida volta para o saldo (o extrato já fica zerado nela)
@@ -331,46 +386,81 @@ class PagamentoCorridaService
         if ($creditoUsado > self::TOLERANCIA) {
             $this->creditar($corrida, $creditoUsado, "Crédito devolvido da corrida {$corrida->codigo_corrida}");
         }
+
+        return $concluido;
     }
 
     /**
-     * Estorno integral na AbacatePay; se falhar, o valor vira crédito no app
-     * para o passageiro não ficar sem o dinheiro.
+     * Estorno integral na AbacatePay. Só vira crédito no app quando a
+     * AbacatePay recusou o estorno E confirma que a cobrança continua paga;
+     * sem resposta, nada é marcado e o estorno é refeito depois, porque ele
+     * pode ter saído e o passageiro receberia em dobro.
      *
      * @param  callable(): void  $estornarNaApi
+     * @return bool false quando o resultado ficou desconhecido
      */
-    private function estornar(Corrida $corrida, int $centavos, callable $estornarNaApi, CobrancaPix|CobrancaCartao $cobranca): void
+    private function estornar(Corrida $corrida, int $centavos, callable $estornarNaApi, CobrancaPix|CobrancaCartao $cobranca): bool
     {
         try {
             $estornarNaApi();
             $cobranca->update(['estornado_em' => now()]);
-        } catch (RuntimeException $erro) {
-            $cobranca->update(['estornado_em' => now()]);
 
-            // falha porque já estava estornada (ex.: outra liquidação chegou
-            // antes): não vira crédito, senão o passageiro recebe em dobro
-            if ($this->jaEstornadaNaAbacatePay($cobranca)) {
-                return;
-            }
-
-            Log::warning('Estorno na AbacatePay falhou; valor convertido em crédito.', [
+            return true;
+        } catch (AbacatePaySemRespostaException $erro) {
+            Log::warning('Estorno na AbacatePay sem resposta; será refeito.', [
                 'corrida_id' => $corrida->id,
                 'erro' => $erro->getMessage(),
             ]);
-            $this->creditar($corrida, $centavos / 100, "Estorno da corrida {$corrida->codigo_corrida} em crédito");
+
+            return false;
+        } catch (RuntimeException $erro) {
+            $situacao = $this->situacaoNaAbacatePay($cobranca);
+
+            // recusado porque já estava estornada (ex.: outra liquidação chegou antes)
+            if ($situacao === 'REFUNDED') {
+                $cobranca->update(['estornado_em' => now()]);
+
+                return true;
+            }
+
+            if ($situacao !== 'PAID') {
+                Log::warning('Estorno na AbacatePay falhou e a cobrança não pôde ser conferida; será refeito.', [
+                    'corrida_id' => $corrida->id,
+                    'erro' => $erro->getMessage(),
+                ]);
+
+                return false;
+            }
+
+            Log::warning('Estorno na AbacatePay recusado; valor convertido em crédito.', [
+                'corrida_id' => $corrida->id,
+                'erro' => $erro->getMessage(),
+            ]);
+            $cobranca->update(['estornado_em' => now()]);
+
+            // sem corrida_id: o dinheiro desta cobrança já sai do valor pago ao
+            // marcá-la estornada; contar o crédito também geraria dívida falsa
+            MovimentoCredito::create([
+                'passageiro_id' => $corrida->passageiro_id,
+                'corrida_id' => null,
+                'valor' => round($centavos / 100, 2),
+                'descricao' => "Estorno da corrida {$corrida->codigo_corrida} em crédito",
+            ]);
+
+            return true;
         }
     }
 
-    private function jaEstornadaNaAbacatePay(CobrancaPix|CobrancaCartao $cobranca): bool
+    private function situacaoNaAbacatePay(CobrancaPix|CobrancaCartao $cobranca): ?string
     {
         try {
             $dados = $cobranca instanceof CobrancaPix
                 ? $this->abacatePay->get('/v2/transparents/check', ['id' => $cobranca->charge_id])
                 : $this->abacatePay->get('/v2/checkouts/get', ['id' => $cobranca->checkout_id]);
 
-            return ($dados['status'] ?? null) === 'REFUNDED';
+            return is_string($dados['status'] ?? null) ? $dados['status'] : null;
         } catch (RuntimeException) {
-            return false;
+            return null;
         }
     }
 

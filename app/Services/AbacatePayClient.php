@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Exceptions\AbacatePaySemRespostaException;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
@@ -18,7 +20,7 @@ class AbacatePayClient
      */
     public function post(string $caminho, array $corpo): array
     {
-        return $this->dados(Http::withToken($this->chave())->timeout(15)->post($this->url($caminho), $corpo));
+        return $this->dados($this->enviar(fn () => Http::withToken($this->chave())->timeout(15)->post($this->url($caminho), $corpo)));
     }
 
     /**
@@ -27,7 +29,7 @@ class AbacatePayClient
      */
     public function get(string $caminho, array $consulta): array
     {
-        return $this->dados(Http::withToken($this->chave())->timeout(15)->get($this->url($caminho), $consulta));
+        return $this->dados($this->enviar(fn () => Http::withToken($this->chave())->timeout(15)->get($this->url($caminho), $consulta)));
     }
 
     /**
@@ -41,6 +43,18 @@ class AbacatePayClient
     public function estornarCheckout(string $checkoutId): void
     {
         $this->post('/v2/checkouts/refund', ['id' => $checkoutId]);
+    }
+
+    /**
+     * @param  callable(): Response  $requisicao
+     */
+    private function enviar(callable $requisicao): Response
+    {
+        try {
+            return $requisicao();
+        } catch (ConnectionException $erro) {
+            throw new AbacatePaySemRespostaException('A AbacatePay não respondeu a tempo.', 502, $erro);
+        }
     }
 
     /**

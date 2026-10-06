@@ -11,6 +11,7 @@ use App\Models\Passageiro;
 use App\Models\User;
 use App\Services\PagamentoCorridaService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
@@ -415,7 +416,82 @@ it('estorno que falha de verdade vira crédito uma única vez', function () {
     $servico->liquidar($corrida);
     $servico->liquidar($corrida);
 
-    expect($servico->saldoCredito($passageiro->id))->toBe(20.0);
+    // liquidar de novo não pode transformar o crédito devolvido em dívida
+    expect($servico->saldoCredito($passageiro->id))->toBe(20.0)
+        ->and($corrida->fresh()->status_pagamento)->toBe('estornado')
+        ->and($servico->pendencia($passageiro->id))->toBeNull();
+});
+
+it('estorno sem resposta não vira crédito e é refeito pelo agendador', function () {
+    $tentativas = 0;
+    Http::fake([
+        'api.abacatepay.com/v2/transparents/refund' => function () use (&$tentativas) {
+            $tentativas++;
+            if ($tentativas === 1) {
+                throw new ConnectionException('timeout');
+            }
+
+            return Http::response(['success' => true, 'error' => null, 'data' => ['status' => 'REFUNDED']]);
+        },
+    ]);
+    $passageiro = passageiroPre();
+    $corrida = corridaTerminada($passageiro, 'cancelada', 'pix', 20.0, ['cancelado_por' => 'motorista']);
+    $pix = pixPago($corrida, 20.0);
+    $servico = app(PagamentoCorridaService::class);
+
+    $servico->liquidar($corrida);
+
+    expect($corrida->fresh()->status_pagamento)->toBe('estorno_pendente')
+        ->and($pix->fresh()->estornado_em)->toBeNull()
+        ->and($servico->saldoCredito($passageiro->id))->toBe(0.0);
+
+    expect($servico->reprocessarEstornosPendentes())->toBe(1);
+
+    expect($corrida->fresh()->status_pagamento)->toBe('estornado')
+        ->and($pix->fresh()->estornado_em)->not->toBeNull()
+        ->and($servico->saldoCredito($passageiro->id))->toBe(0.0);
+});
+
+it('estorno recusado sem conseguir conferir a cobrança não vira crédito', function () {
+    Http::fake([
+        'api.abacatepay.com/v2/transparents/refund' => Http::response(['success' => false, 'error' => 'indisponível'], 500),
+        'api.abacatepay.com/v2/transparents/check*' => fn () => throw new ConnectionException('timeout'),
+    ]);
+    $passageiro = passageiroPre();
+    $corrida = corridaTerminada($passageiro, 'cancelada', 'pix', 20.0, ['cancelado_por' => 'motorista']);
+    pixPago($corrida, 20.0);
+    $servico = app(PagamentoCorridaService::class);
+
+    $servico->liquidar($corrida);
+
+    expect($corrida->fresh()->status_pagamento)->toBe('estorno_pendente')
+        ->and($servico->saldoCredito($passageiro->id))->toBe(0.0);
+});
+
+it('pedido vencido confere também o Pix antigo antes de cancelar', function () {
+    Carbon::setTestNow('2026-10-06 10:00:00');
+    Http::fake([
+        'api.abacatepay.com/v2/transparents/check?id=pix_char_antigo' => Http::response(['success' => true, 'error' => null, 'data' => ['id' => 'pix_char_antigo', 'status' => 'PAID']]),
+        'api.abacatepay.com/v2/transparents/check?id=pix_char_novo' => Http::response(['success' => true, 'error' => null, 'data' => ['id' => 'pix_char_novo', 'status' => 'EXPIRED']]),
+    ]);
+    $corrida = corridaTerminada(passageiroPre(), 'aguardando_pagamento', 'pix', 20.0, ['status_pagamento' => 'pendente', 'tempo_solicitacao' => now()]);
+    foreach (['pix_char_antigo', 'pix_char_novo'] as $id) {
+        CobrancaPix::create([
+            'corrida_id' => $corrida->id,
+            'charge_id' => $id,
+            'status' => 'PENDING',
+            'valor_centavos' => 2000,
+            'br_code' => 'x',
+            'br_code_base64' => 'x',
+            'dev_mode' => true,
+            'expira_em' => now()->addMinutes(15),
+        ]);
+    }
+
+    Carbon::setTestNow('2026-10-06 10:17:00');
+
+    expect(app(PagamentoCorridaService::class)->expirarPagamentosVencidos())->toBe(0)
+        ->and($corrida->fresh()->status_corrida)->toBe('solicitada');
 });
 
 it('crédito usado volta ao saldo quando a corrida é cancelada sem taxa', function () {
