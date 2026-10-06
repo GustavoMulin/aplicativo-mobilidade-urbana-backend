@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\TipoDocumentoMotorista;
 use Illuminate\Database\Eloquent\Model;
 
 class MotoristaDocumento extends Model
@@ -17,4 +18,10 @@ class MotoristaDocumento extends Model
         'status',
         'observacao',
     ];
+
+    /** @return array<string, string> */
+    protected function casts(): array
+    {
+        return ['tipo_documento' => TipoDocumentoMotorista::class];
+    }
 }

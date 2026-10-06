@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Motorista;
 
+use App\Enums\TipoDocumentoMotorista;
 use App\Http\Controllers\Controller;
 use App\Models\Motorista;
 use App\Models\MotoristaDocumento;
@@ -12,6 +13,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class MotoristaCadastroController extends Controller
 {
@@ -39,7 +41,7 @@ class MotoristaCadastroController extends Controller
                 'documentos' => [],
                 'veiculos' => 0,
                 'pendencias' => ['cnh', 'documentos', 'veiculo'],
-                'documentos_faltando' => AtualizarSituacaoMotoristaService::DOCUMENTOS_EXIGIDOS,
+                'documentos_faltando' => TipoDocumentoMotorista::valores(),
             ]);
         }
 
@@ -53,11 +55,12 @@ class MotoristaCadastroController extends Controller
 
         return response()->json([
             'situacao' => $motorista->status,
-            'cnh' => $motorista->cnh_numero === null ? null : [
-                'numero' => $motorista->cnh_numero,
+            'cnh' => $motorista->numero_registro === null ? null : [
+                'numero' => $motorista->numero_registro,
                 'categoria' => $motorista->cnh_categoria,
                 'expiracao' => $motorista->cnh_expiracao,
                 'ear' => (bool) $motorista->ear,
+                'observacao' => $motorista->observacao,
             ],
             'documentos' => $documentos,
             'veiculos' => $veiculos,
@@ -74,12 +77,13 @@ class MotoristaCadastroController extends Controller
     public function salvarCnh(Request $request): JsonResponse
     {
         $dados = $request->validate([
-            'cnh_numero' => 'required|string|max:20',
+            'numero_registro' => 'required|string|max:20',
             'cnh_categoria' => 'required|string|in:A,B,AB,C,D,E,a,b,ab,c,d,e',
             'cnh_expiracao' => 'required|date|after:today',
             'ear' => 'required|boolean',
+            'observacao' => 'nullable|string|max:5000',
         ], [
-            'cnh_numero.required' => 'Informe o número da sua CNH.',
+            'numero_registro.required' => 'Informe o número de registro da sua CNH.',
             'cnh_categoria.in' => 'Categoria de CNH inválida.',
             'cnh_expiracao.after' => 'Sua CNH está vencida.',
         ]);
@@ -93,10 +97,11 @@ class MotoristaCadastroController extends Controller
         }
 
         $motorista->fill([
-            'cnh_numero' => preg_replace('/\D/', '', (string) $dados['cnh_numero']),
+            'numero_registro' => preg_replace('/\D/', '', (string) $dados['numero_registro']),
             'cnh_categoria' => strtoupper((string) $dados['cnh_categoria']),
             'cnh_expiracao' => $dados['cnh_expiracao'],
             'ear' => (bool) $dados['ear'],
+            ...array_intersect_key($dados, ['observacao' => true]),
             'status' => 'em_analise',
         ])->save();
 
@@ -117,7 +122,7 @@ class MotoristaCadastroController extends Controller
     public function enviarDocumento(Request $request): JsonResponse
     {
         $dados = $request->validate([
-            'tipo_documento' => 'required|string|in:'.implode(',', AtualizarSituacaoMotoristaService::DOCUMENTOS_EXIGIDOS),
+            'tipo_documento' => ['required', Rule::enum(TipoDocumentoMotorista::class)],
             'arquivo' => 'required|file|mimes:jpg,jpeg,png,webp,heic,heif,gif,pdf|max:10240',
         ]);
 
@@ -201,13 +206,13 @@ class MotoristaCadastroController extends Controller
 
         $motorista = Motorista::firstOrNew(['user_id' => $request->user()->id]);
 
-        $motorista->cnh_numero ??= '00000000000';
+        $motorista->numero_registro ??= '00000000000';
         $motorista->cnh_categoria ??= 'B';
         $motorista->cnh_expiracao ??= now()->addYears(5)->toDateString();
         $motorista->ear ??= false;
         $motorista->save();
 
-        foreach (AtualizarSituacaoMotoristaService::DOCUMENTOS_EXIGIDOS as $tipo) {
+        foreach (TipoDocumentoMotorista::valores() as $tipo) {
             MotoristaDocumento::create([
                 'motorista_id' => $motorista->id,
                 'tipo_documento' => $tipo,
@@ -235,7 +240,7 @@ class MotoristaCadastroController extends Controller
     {
         $pendencias = [];
 
-        if ($motorista->cnh_numero === null) {
+        if ($motorista->numero_registro === null) {
             $pendencias[] = 'cnh';
         }
 

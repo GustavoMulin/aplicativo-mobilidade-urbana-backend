@@ -2,22 +2,12 @@
 
 namespace App\Services;
 
+use App\Enums\TipoDocumentoMotorista;
 use App\Models\Motorista;
 use App\Models\MotoristaDocumento;
 
 class AtualizarSituacaoMotoristaService
 {
-    /**
-     * Documentos que o painel de gestão analisa. A liberação do motorista é
-     * derivada deles: aprovar o último documento aprova o motorista.
-     */
-    public const DOCUMENTOS_EXIGIDOS = [
-        'cnh',
-        'crlv',
-        'nada_consta',
-        'seguro_obrigatorio',
-    ];
-
     public function executar(Motorista $motorista): string
     {
         $situacao = $this->calcular($motorista);
@@ -35,7 +25,7 @@ class AtualizarSituacaoMotoristaService
     public function documentosQueFaltam(Motorista $motorista): array
     {
         $documentos = MotoristaDocumento::where('motorista_id', $motorista->id)
-            ->whereIn('tipo_documento', self::DOCUMENTOS_EXIGIDOS)
+            ->whereIn('tipo_documento', TipoDocumentoMotorista::valores())
             ->orderByDesc('id')
             ->get(['tipo_documento', 'status'])
             ->unique('tipo_documento');
@@ -43,15 +33,16 @@ class AtualizarSituacaoMotoristaService
         $aprovados = $documentos
             ->where('status', 'aprovado')
             ->pluck('tipo_documento')
+            ->map(fn (TipoDocumentoMotorista $tipo): string => $tipo->value)
             ->all();
 
-        return array_values(array_diff(self::DOCUMENTOS_EXIGIDOS, $aprovados));
+        return array_values(array_diff(TipoDocumentoMotorista::valores(), $aprovados));
     }
 
     private function calcular(Motorista $motorista): string
     {
         $documentos = MotoristaDocumento::where('motorista_id', $motorista->id)
-            ->whereIn('tipo_documento', self::DOCUMENTOS_EXIGIDOS)
+            ->whereIn('tipo_documento', TipoDocumentoMotorista::valores())
             ->orderByDesc('id')
             ->get(['tipo_documento', 'status'])
             ->unique('tipo_documento');
@@ -69,9 +60,10 @@ class AtualizarSituacaoMotoristaService
         $aprovados = $documentos
             ->where('status', 'aprovado')
             ->pluck('tipo_documento')
+            ->map(fn (TipoDocumentoMotorista $tipo): string => $tipo->value)
             ->unique();
 
-        $faltam = array_diff(self::DOCUMENTOS_EXIGIDOS, $aprovados->all());
+        $faltam = array_diff(TipoDocumentoMotorista::valores(), $aprovados->all());
 
         return $faltam === [] ? 'aprovado' : 'em_analise';
     }

@@ -52,7 +52,7 @@ function criarMotoristaDespacho(
     $motorista = Motorista::create([
         'user_id' => $usuario->id,
         'status' => 'aprovado',
-        'cnh_numero' => null,
+        'numero_registro' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,
         'ear' => null,

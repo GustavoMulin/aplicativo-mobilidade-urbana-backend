@@ -90,7 +90,7 @@ class DatabaseSeeder extends Seeder
 
         // $motorista = Motorista::factory()->create([
         //     'user_id' => $userMotorista->id,
-        //     'cnh_numero' => '2022-04-11',
+        //     'numero_registro' => '2022-04-11',
         //     'cnh_categoria' => 'ABC',
         //     'cnh_expiracao' => '04-12-2029',
         //     'ear' => true,

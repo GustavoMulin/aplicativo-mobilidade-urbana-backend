@@ -189,7 +189,7 @@ class UsuarioController extends Controller
         return [
             'password.min' => 'A senha deve ter no mínimo 8 caracteres.',
             'data_nascimento.before_or_equal' => 'Você precisa ter pelo menos 18 anos para se cadastrar.',
-            'cnh_numero.required' => 'Informe o número da sua CNH.',
+            'numero_registro.required' => 'Informe o número de registro da sua CNH.',
             'cnh_categoria.in' => 'Categoria de CNH inválida.',
             'cnh_expiracao.after' => 'Sua CNH está vencida.',
         ];

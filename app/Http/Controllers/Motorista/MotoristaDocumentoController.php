@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Motorista;
 
+use App\Enums\TipoDocumentoMotorista;
 use App\Http\Controllers\Controller;
 use App\Models\Motorista;
 use App\Models\MotoristaDocumento;
@@ -9,13 +10,47 @@ use App\Services\AtualizarSituacaoMotoristaService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
+use Throwable;
 
 class MotoristaDocumentoController extends Controller
 {
     public function __construct(
         protected AtualizarSituacaoMotoristaService $atualizarSituacaoMotoristaService
     ) {}
+
+    public function tipos(): JsonResponse
+    {
+        return response()->json(['data' => TipoDocumentoMotorista::catalogo()]);
+    }
+
+    public function resumo(int $motoristaId): JsonResponse
+    {
+        Motorista::findOrFail($motoristaId);
+
+        $ultimosEnvios = MotoristaDocumento::query()
+            ->where('motorista_id', $motoristaId)
+            ->whereIn('tipo_documento', TipoDocumentoMotorista::valores())
+            ->selectRaw('MAX(id) as id')
+            ->groupBy('tipo_documento');
+
+        $documentos = MotoristaDocumento::query()
+            ->whereIn('id', $ultimosEnvios)
+            ->get()
+            ->keyBy(fn (MotoristaDocumento $documento): string => $documento->tipo_documento->value);
+
+        $dados = array_map(fn (array $tipo): array => [
+            ...$tipo,
+            'id' => null,
+            'status' => null,
+            'observacao' => null,
+            ...($documentos->get($tipo['tipo_documento'])?->toArray() ?? []),
+        ], TipoDocumentoMotorista::catalogo());
+
+        return response()->json(['data' => $dados]);
+    }
 
     /**
      * Display a listing of the resource.
@@ -32,39 +67,62 @@ class MotoristaDocumentoController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        $request->validate([
+        $dados = $request->validate([
             'motorista_id' => 'required|integer|exists:motoristas,id',
-            'tipo_documento' => 'required|string|max:60',
-            'arquivo' => 'required|file|mimes:jpg,jpeg,png,pdf|max:2048', // 2MB
+            'tipo_documento' => ['required', Rule::enum(TipoDocumentoMotorista::class)],
+            'arquivo' => 'required|file|mimes:jpg,jpeg,png,pdf|max:2048',
+            'cnh' => 'sometimes|array:nome,cpf,data_nascimento,numero_registro,cnh_categoria,primeira_habilitacao,data_emissao,cnh_expiracao,ear,observacao|prohibited_unless:tipo_documento,'.TipoDocumentoMotorista::CNH->value,
+            'cnh.nome' => 'nullable|string|max:255',
+            'cnh.cpf' => ['nullable', 'string', 'regex:/^[0-9]{11}$/'],
+            'cnh.data_nascimento' => 'nullable|date_format:Y-m-d',
+            'cnh.numero_registro' => 'nullable|string|max:20',
+            'cnh.cnh_categoria' => 'nullable|string|max:20',
+            'cnh.primeira_habilitacao' => 'nullable|date_format:Y-m-d',
+            'cnh.data_emissao' => 'nullable|date_format:Y-m-d',
+            'cnh.cnh_expiracao' => 'nullable|date_format:Y-m-d',
+            'cnh.ear' => 'nullable|boolean',
+            'cnh.observacao' => 'nullable|string|max:5000',
         ]);
 
         $file = $request->file('arquivo');
+        $path = $file->store('motorista_documentos', 'local');
+        abort_if($path === false, 500, 'Não foi possível armazenar o arquivo.');
 
-        // Nome único
-        $fileName = time().'_'.$file->getClientOriginalName();
+        try {
+            $resultado = DB::transaction(function () use ($dados, $file, $path): array {
+                $motorista = Motorista::lockForUpdate()->findOrFail($dados['motorista_id']);
 
-        // Salvar arquivo
-        $path = $file->storeAs('motorista_documentos', $fileName);
+                if ($dados['tipo_documento'] === TipoDocumentoMotorista::CNH->value && isset($dados['cnh'])) {
+                    $motorista->update($dados['cnh']);
+                }
 
-        // Salvar no banco
-        $motoristaDocumento = MotoristaDocumento::create([
-            'motorista_id' => $request->motorista_id,
-            'tipo_documento' => $request->tipo_documento,
-            'name' => $file->getClientOriginalName(),
-            'type' => $file->extension(),
-            'mime_type' => $file->getMimeType(),
-            'size' => $file->getSize(),
-            'path' => $path,
-            'status' => 'em_analise',
-        ]);
+                $motoristaDocumento = MotoristaDocumento::create([
+                    'motorista_id' => $motorista->id,
+                    'tipo_documento' => $dados['tipo_documento'],
+                    'name' => $file->getClientOriginalName(),
+                    'type' => $file->extension(),
+                    'mime_type' => $file->getMimeType(),
+                    'size' => $file->getSize(),
+                    'path' => $path,
+                    'status' => 'em_analise',
+                ]);
 
-        $motorista = Motorista::findOrFail($motoristaDocumento->motorista_id);
-        $situacao = $this->atualizarSituacaoMotoristaService->executar($motorista);
+                $situacao = $this->atualizarSituacaoMotoristaService->executar($motorista);
+
+                return [
+                    'data' => $motoristaDocumento,
+                    'motorista' => $motorista->fresh(),
+                    'situacao_motorista' => $situacao,
+                ];
+            });
+        } catch (Throwable $exception) {
+            Storage::disk('local')->delete($path);
+            throw $exception;
+        }
 
         return response()->json([
             'message' => 'Arquivo enviado com sucesso',
-            'data' => $motoristaDocumento,
-            'situacao_motorista' => $situacao,
+            ...$resultado,
         ], 201);
     }
 

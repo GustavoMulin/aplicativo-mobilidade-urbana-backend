@@ -97,7 +97,7 @@ it('atalho de desenvolvimento aprova o motorista sem passar pela análise', func
 
     $motorista = Motorista::where('user_id', $usuario->id)->firstOrFail();
     expect($motorista->status)->toBe('aprovado')
-        ->and($motorista->cnh_numero)->not->toBeNull();
+        ->and($motorista->numero_registro)->not->toBeNull();
 
     $documentos = MotoristaDocumento::where('motorista_id', $motorista->id)->get();
     expect($documentos)->toHaveCount(4)
@@ -115,7 +115,7 @@ it('atalho de desenvolvimento não duplica CNH já preenchida', function () {
     $motorista = Motorista::create([
         'user_id' => $usuario->id,
         'status' => 'pendente',
-        'cnh_numero' => '11122233344',
+        'numero_registro' => '11122233344',
         'cnh_categoria' => 'A',
         'cnh_expiracao' => now()->addYear()->toDateString(),
         'ear' => true,
@@ -125,5 +125,31 @@ it('atalho de desenvolvimento não duplica CNH já preenchida', function () {
         ->postJson('/api/motorista/cadastro/aprovar-dev')
         ->assertOk();
 
-    expect($motorista->fresh()->cnh_numero)->toBe('11122233344');
+    expect($motorista->fresh()->numero_registro)->toBe('11122233344');
+});
+
+it('salva e retorna o numero de registro como identificacao unica da CNH', function () {
+    $usuario = User::factory()->create();
+    $expiracao = now()->addYear()->toDateString();
+
+    $this->actingAs($usuario, 'jwt')->postJson('/api/motorista/cadastro/cnh', [
+        'numero_registro' => '00123456789',
+        'cnh_categoria' => 'AB',
+        'cnh_expiracao' => $expiracao,
+        'ear' => true,
+        'observacao' => "EAR\nA, B",
+    ])->assertCreated();
+
+    $this->assertDatabaseHas('motoristas', [
+        'user_id' => $usuario->id,
+        'numero_registro' => '00123456789',
+        'cnh_expiracao' => $expiracao,
+        'observacao' => "EAR\nA, B",
+    ]);
+    $this->actingAs($usuario, 'jwt')->getJson('/api/motorista/cadastro')
+        ->assertOk()
+        ->assertJsonPath('cnh.numero', '00123456789')
+        ->assertJsonPath('cnh.expiracao', $expiracao)
+        ->assertJsonPath('cnh.observacao', "EAR\nA, B")
+        ->assertJsonPath('pendencias', ['documentos', 'veiculo']);
 });
