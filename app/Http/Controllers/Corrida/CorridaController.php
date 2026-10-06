@@ -34,6 +34,7 @@ use RuntimeException;
 class CorridaController extends Controller
 {
     private const STATUS_ATIVOS = [
+        'aguardando_pagamento',
         'solicitada',
         'em_busca',
         'aceita',

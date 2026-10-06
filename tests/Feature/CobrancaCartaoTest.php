@@ -42,7 +42,8 @@ function corridaCartao(Passageiro $passageiro, string $status = 'finalizada', st
         'status_corrida' => $status,
         'tempo_solicitacao' => now()->subHour(),
         'metodo_pagamento' => $metodo,
-        'status_pagamento' => 'pendente',
+        // corrida finalizada sem pagamento no app = pendência a quitar
+        'status_pagamento' => $status === 'finalizada' && $metodo !== 'dinheiro' ? 'em_aberto' : 'pago',
     ]);
     CorridaFinanceiro::create([
         'corrida_id' => $corrida->id,
@@ -112,10 +113,11 @@ it('marca a corrida como paga quando o checkout é pago', function () {
     expect($corrida->fresh()->status_pagamento)->toBe('pago');
 });
 
-it('recusa cartão para corrida em outro método ou ainda não finalizada', function () {
+it('recusa cartão sem pendência e no pré-pagamento de outro método', function () {
     Http::fake();
     $passageiro = passageiroCartao();
     $pix = corridaCartao($passageiro, 'finalizada', 'pix');
+    $pix->update(['status_pagamento' => 'pago']);
     $andamento = corridaCartao($passageiro, 'em_andamento');
 
     $this->actingAs($passageiro->user, 'jwt')->postJson("/api/corridas/{$pix->id}/cartao")->assertStatus(409);

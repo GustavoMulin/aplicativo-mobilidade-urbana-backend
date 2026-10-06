@@ -18,13 +18,16 @@ class CobrancaCartaoController extends Controller
     public function criar(Request $request, int $corrida): JsonResponse
     {
         $corrida = $this->corridaDoPassageiro($request, $corrida);
+        $aguardando = $corrida->status_corrida === 'aguardando_pagamento';
 
-        if ($corrida->metodo_pagamento !== 'cartao') {
-            return response()->json(['message' => 'Esta corrida não foi paga no cartão.'], 409);
+        // pré-pagamento: só no método escolhido ao pedir a corrida
+        if ($aguardando && $corrida->metodo_pagamento !== 'cartao') {
+            return response()->json(['message' => 'Esta corrida foi pedida com outra forma de pagamento.'], 409);
         }
 
-        if ($corrida->status_corrida !== 'finalizada') {
-            return response()->json(['message' => 'O pagamento no cartão é feito quando a corrida termina.'], 409);
+        // depois da corrida: só para quitar uma pendência (aceita cartão mesmo se a corrida foi em outro método)
+        if (! $aguardando && $corrida->status_pagamento !== 'em_aberto') {
+            return response()->json(['message' => 'Esta corrida não tem pagamento pendente.'], 409);
         }
 
         return $this->responder(fn () => $this->cobrancaCartao->paraCorrida($corrida));

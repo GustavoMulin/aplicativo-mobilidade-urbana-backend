@@ -43,7 +43,8 @@ function corridaPix(Passageiro $passageiro, string $status = 'finalizada', strin
         'status_corrida' => $status,
         'tempo_solicitacao' => now()->subHour(),
         'metodo_pagamento' => $metodo,
-        'status_pagamento' => 'pendente',
+        // corrida finalizada sem pagamento no app = pendência a quitar
+        'status_pagamento' => $status === 'finalizada' && $metodo !== 'dinheiro' ? 'em_aberto' : 'pago',
     ]);
     CorridaFinanceiro::create([
         'corrida_id' => $corrida->id,
@@ -180,5 +181,5 @@ it('não confirma pagamento de outra cobrança devolvida pela AbacatePay', funct
         ->getJson("/api/corridas/{$corrida->id}/pix")
         ->assertStatus(502);
 
-    expect($corrida->fresh()->status_pagamento)->toBe('pendente');
+    expect($corrida->fresh()->status_pagamento)->toBe('em_aberto');
 });

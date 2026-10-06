@@ -33,6 +33,7 @@ class DespachoCorridaService
     public function __construct(
         private readonly ContabilizarEsperaCorridaService $contabilizarEsperaCorridaService,
         private readonly NotificarUsuarioService $notificarUsuario,
+        private readonly PagamentoCorridaService $pagamento,
     ) {}
 
     public function atualizarDisponibilidade(
@@ -272,7 +273,7 @@ class DespachoCorridaService
     ];
 
     private const CANCELAVEL_POR = [
-        'passageiro' => ['solicitada', 'em_busca', 'aceita', 'motorista_chegou'],
+        'passageiro' => ['aguardando_pagamento', 'solicitada', 'em_busca', 'aceita', 'motorista_chegou'],
         'motorista' => ['aceita', 'motorista_chegou'],
     ];
 
@@ -284,7 +285,7 @@ class DespachoCorridaService
             throw new RuntimeException('Ação desconhecida.', 422);
         }
 
-        return DB::transaction(function () use ($motorista, $corridaId, $regra) {
+        $atualizada = DB::transaction(function () use ($motorista, $corridaId, $regra) {
             $corrida = Corrida::whereKey($corridaId)->lockForUpdate()->first();
 
             if ($corrida === null || $corrida->motorista_id !== $motorista->id) {
@@ -325,6 +326,13 @@ class DespachoCorridaService
 
             return $corrida->fresh(['corrida_destinos', 'corrida_financeiro']);
         });
+
+        // fora da transação: pode chamar a AbacatePay (estorno)
+        if ($atualizada->status_corrida === 'finalizada') {
+            $this->pagamento->liquidarSemQuebrar($atualizada);
+        }
+
+        return $atualizada->fresh(['corrida_destinos', 'corrida_financeiro']);
     }
 
     /**
@@ -380,7 +388,7 @@ class DespachoCorridaService
     {
         $permitidos = self::CANCELAVEL_POR[$quem] ?? [];
 
-        return DB::transaction(function () use ($corridaId, $quem, $donoId, $motivo, $tipo, $permitidos, $taxaConfirmada) {
+        $cancelada = DB::transaction(function () use ($corridaId, $quem, $donoId, $motivo, $tipo, $permitidos, $taxaConfirmada) {
             $corrida = Corrida::whereKey($corridaId)->lockForUpdate()->first();
 
             $campo = $quem === 'motorista' ? 'motorista_id' : 'passageiro_id';
@@ -462,6 +470,11 @@ class DespachoCorridaService
 
             return $corrida->fresh(['corrida_destinos', 'corrida_financeiro']);
         });
+
+        // estorno, crédito ou pendência, fora da transação
+        $this->pagamento->liquidarSemQuebrar($cancelada);
+
+        return $cancelada->fresh(['corrida_destinos', 'corrida_financeiro']);
     }
 
     public function cancelarEsperasExpiradas(): int
@@ -510,6 +523,13 @@ class DespachoCorridaService
                     'motivo' => $e->getMessage(),
                 ]);
                 $cancelada = false;
+            }
+
+            if ($cancelada) {
+                $expirada = Corrida::find((int) $corridaId);
+                if ($expirada !== null) {
+                    $this->pagamento->liquidarSemQuebrar($expirada);
+                }
             }
 
             $canceladas += (int) $cancelada;
@@ -727,7 +747,7 @@ class DespachoCorridaService
 
         $status = $corrida->status_corrida;
 
-        if (in_array($status, ['solicitada', 'em_busca'], true)) {
+        if (in_array($status, ['aguardando_pagamento', 'solicitada', 'em_busca'], true)) {
             return $gratis('Nenhum motorista aceitou sua corrida ainda.');
         }
 

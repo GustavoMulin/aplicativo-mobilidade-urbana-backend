@@ -13,6 +13,9 @@ use Illuminate\Support\Facades\Route;
 // autenticada com auth:jwt), por isso é incluído fora do grupo abaixo.
 require __DIR__.'/api/auth.php';
 
+// webhooks de terceiros: públicos, autenticados pelo segredo de cada provedor
+require __DIR__.'/api/webhooks.php';
+
 Route::middleware('auth:jwt')->group(function () {
     Route::post('broadcasting/auth', fn (Request $request) => Broadcast::auth($request));
 
@@ -26,4 +29,5 @@ Route::middleware('auth:jwt')->group(function () {
     require __DIR__.'/api/estimativa.php';
     require __DIR__.'/api/ajuda.php';
     require __DIR__.'/api/notificacoes.php';
+    require __DIR__.'/api/pagamentos.php';
 });

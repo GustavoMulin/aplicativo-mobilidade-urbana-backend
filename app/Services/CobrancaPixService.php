@@ -4,21 +4,33 @@ namespace App\Services;
 
 use App\Models\CobrancaPix;
 use App\Models\Corrida;
-use Illuminate\Http\Client\Response;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
 /**
- * Cobrança Pix da corrida pela AbacatePay. Com chave abc_dev_ a cobrança é
- * simulada: o aplicativo pode marcar como paga pelo endpoint de simulação.
+ * Cobrança Pix da corrida pela AbacatePay. Cobra o valor devido no momento:
+ * o pré-pagamento ao pedir a corrida ou a pendência depois que ela terminou.
+ * Com chave abc_dev_ a cobrança é simulada e pode ser paga pelo sandbox.
  */
 class CobrancaPixService
 {
+    public function __construct(
+        private readonly AbacatePayClient $abacatePay,
+        private readonly PagamentoCorridaService $pagamento,
+    ) {}
+
     public function paraCorrida(Corrida $corrida): CobrancaPix
     {
+        $valor = $this->pagamento->valorDevido($corrida);
+
+        if ($valor <= 0) {
+            throw new RuntimeException('Não há valor a pagar nesta corrida.', 409);
+        }
+
+        $centavos = (int) round($valor * 100);
         $existente = CobrancaPix::where('corrida_id', $corrida->id)
             ->where('status', 'PENDING')
+            ->where('valor_centavos', $centavos)
             ->latest('id')
             ->first();
 
@@ -26,18 +38,16 @@ class CobrancaPixService
             return $existente;
         }
 
-        $corrida->loadMissing(['corrida_financeiro', 'passageiro.user']);
-        $valor = (float) $corrida->corrida_financeiro?->valor_pago_passageiro;
-        $usuario = $corrida->passageiro?->user;
+        $usuario = $corrida->passageiro()->first()?->user;
 
-        if ($valor <= 0 || $usuario === null) {
-            throw new RuntimeException('A corrida não tem valor ou passageiro para cobrar por Pix.', 409);
+        if ($usuario === null) {
+            throw new RuntimeException('Passageiro da corrida não encontrado.', 409);
         }
 
-        $dados = $this->post('/v2/transparents/create', [
+        $dados = $this->abacatePay->post('/v2/transparents/create', [
             'method' => 'PIX',
             'data' => [
-                'amount' => (int) round($valor * 100),
+                'amount' => $centavos,
                 'description' => "Corrida {$corrida->codigo_corrida}",
                 'expiresIn' => (int) config('abacatepay.validade_segundos'),
                 'customer' => [
@@ -62,23 +72,28 @@ class CobrancaPixService
         ]);
     }
 
-    public function sincronizar(CobrancaPix $cobranca): CobrancaPix
+    /**
+     * Reconsulta a AbacatePay; nunca confia em status vindo do aplicativo ou
+     * do corpo do webhook. $acionar=false só atualiza o registro.
+     */
+    public function sincronizar(CobrancaPix $cobranca, bool $acionar = true): CobrancaPix
     {
-        $dados = $this->get('/v2/transparents/check', ['id' => $cobranca->charge_id]);
+        $dados = $this->abacatePay->get('/v2/transparents/check', ['id' => $cobranca->charge_id]);
 
         // a resposta precisa ser da mesma cobrança consultada
         if (($dados['id'] ?? null) !== $cobranca->charge_id) {
             throw new RuntimeException('A AbacatePay devolveu uma cobrança diferente da consultada.', 502);
         }
 
+        $acabouDePagar = $dados['status'] === 'PAID' && $cobranca->status !== 'PAID';
+
         $cobranca->update([
             'status' => $dados['status'],
-            'pago_em' => $dados['status'] === 'PAID' ? ($cobranca->pago_em ?? now()) : $cobranca->pago_em,
+            'pago_em' => $acabouDePagar ? now() : $cobranca->pago_em,
         ]);
 
-        if ($dados['status'] === 'PAID') {
-            Corrida::whereKey($cobranca->corrida_id)->update(['status_pagamento' => 'pago']);
-            $this->avisarMotoristaRecebimento($cobranca->corrida_id);
+        if ($acabouDePagar && $acionar) {
+            $this->pagamento->aoConfirmarPagamento($cobranca->corrida_id);
         }
 
         return $cobranca->refresh();
@@ -91,74 +106,11 @@ class CobrancaPixService
         }
 
         // a AbacatePay exige o id na query string, além do corpo
-        $this->post('/v2/transparents/simulate-payment?'.http_build_query(['id' => $cobranca->charge_id]), ['id' => $cobranca->charge_id]);
+        $this->abacatePay->post(
+            '/v2/transparents/simulate-payment?'.http_build_query(['id' => $cobranca->charge_id]),
+            ['id' => $cobranca->charge_id]
+        );
 
         return $this->sincronizar($cobranca);
-    }
-
-    private function avisarMotoristaRecebimento(int $corridaId): void
-    {
-        $motoristaUserId = Corrida::whereKey($corridaId)
-            ->join('motoristas', 'motoristas.id', '=', 'corridas.motorista_id')
-            ->value('motoristas.user_id');
-
-        if ($motoristaUserId !== null) {
-            app(NotificarUsuarioService::class)->executar(
-                (int) $motoristaUserId,
-                'Pagamento recebido',
-                'O passageiro concluiu o pagamento desta corrida.'
-            );
-        }
-    }
-
-    /**
-     * @param  array<string, mixed>  $corpo
-     * @return array<string, mixed>
-     */
-    private function post(string $caminho, array $corpo): array
-    {
-        return $this->enviar(Http::withToken($this->chave())->timeout(15)->post($this->url($caminho), $corpo));
-    }
-
-    /**
-     * @param  array<string, string>  $consulta
-     * @return array<string, mixed>
-     */
-    private function get(string $caminho, array $consulta): array
-    {
-        return $this->enviar(Http::withToken($this->chave())->timeout(15)->get($this->url($caminho), $consulta));
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    private function enviar(Response $resposta): array
-    {
-        $json = $resposta->json();
-
-        if (! $resposta->successful() || ! is_array($json) || ($json['success'] ?? false) !== true) {
-            throw new RuntimeException(
-                'Não foi possível falar com a AbacatePay: '.($json['error'] ?? 'resposta inválida'),
-                502
-            );
-        }
-
-        return $json['data'];
-    }
-
-    private function url(string $caminho): string
-    {
-        return rtrim((string) config('abacatepay.base_url'), '/').$caminho;
-    }
-
-    private function chave(): string
-    {
-        $chave = (string) config('abacatepay.api_key');
-
-        if ($chave === '') {
-            throw new RuntimeException('Chave da AbacatePay não configurada.', 502);
-        }
-
-        return $chave;
     }
 }

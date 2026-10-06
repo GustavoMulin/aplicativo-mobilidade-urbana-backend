@@ -5,6 +5,8 @@ return [
     'base_url' => env('ABACATEPAY_BASE_URL', 'https://api.abacatepay.com'),
     'api_key' => env('ABACATEPAY_API_KEY'),
     // para onde a AbacatePay devolve o cliente depois do checkout de cartão
+    // segredo enviado pela AbacatePay no parâmetro webhookSecret de cada entrega
+    'webhook_secret' => env('ABACATEPAY_WEBHOOK_SECRET'),
     'url_retorno' => env('ABACATEPAY_URL_RETORNO', 'https://example.test/pagamento-concluido'),
     'validade_segundos' => (int) env('ABACATEPAY_VALIDADE_SEGUNDOS', 900),
     // simulação de pagamento só existe em ambiente local/dev, nunca em produção
