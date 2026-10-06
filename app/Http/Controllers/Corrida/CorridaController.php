@@ -539,7 +539,7 @@ class CorridaController extends Controller
         // menos de 3 caracteres quase nunca traz resultado útil — evita
         // gastar requisição da Places API à toa
         if (mb_strlen(trim($endereco)) < 3) {
-            return response()->json([], 404);
+            return response()->json([]);
         }
 
         $chaveCache = 'busca-endereco:'.md5(mb_strtolower(trim($endereco)));
@@ -551,7 +551,7 @@ class CorridaController extends Controller
         );
 
         if (empty($resultados)) {
-            return response()->json([], 404);
+            return response()->json([]);
         }
 
         return response()->json($this->ordenarPorProximidade($resultados, $request));
