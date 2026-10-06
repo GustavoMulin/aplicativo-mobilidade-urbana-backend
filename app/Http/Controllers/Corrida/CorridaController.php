@@ -210,16 +210,29 @@ class CorridaController extends Controller
     public function pedirNovoDestino(Request $request, int $corrida, AlterarCorridaService $alterarCorrida): JsonResponse
     {
         $dados = $request->validate([
+            'tipo' => 'sometimes|in:destino,parada',
             'endereco' => 'required|string|max:255',
             'latitude' => 'required|numeric|between:-90,90|not_in:0',
             'longitude' => 'required|numeric|between:-180,180|not_in:0',
+            'itinerario' => 'sometimes|array|min:2|max:6',
+            'itinerario.*.endereco' => 'required_with:itinerario|string|max:255',
+            'itinerario.*.latitude' => 'required_with:itinerario|numeric|between:-90,90|not_in:0',
+            'itinerario.*.longitude' => 'required_with:itinerario|numeric|between:-180,180|not_in:0',
         ]);
 
         return $this->alterarComoPassageiro($request, $corrida, $alterarCorrida,
             fn (int $passageiroId) => $alterarCorrida->pedirNovoDestino($passageiroId, $corrida, [
+                'tipo' => $dados['tipo'] ?? 'destino',
                 'endereco' => $dados['endereco'],
                 'latitude' => (float) $dados['latitude'],
                 'longitude' => (float) $dados['longitude'],
+                'itinerario' => isset($dados['itinerario'])
+                    ? array_map(fn (array $ponto): array => [
+                        'endereco' => $ponto['endereco'],
+                        'latitude' => (float) $ponto['latitude'],
+                        'longitude' => (float) $ponto['longitude'],
+                    ], $dados['itinerario'])
+                    : null,
             ]));
     }
 

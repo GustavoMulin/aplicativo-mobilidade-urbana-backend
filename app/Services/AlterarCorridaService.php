@@ -95,7 +95,7 @@ class AlterarCorridaService
     }
 
     /**
-     * @param  array{endereco: string, latitude: float, longitude: float}  $destino
+     * @param  array{tipo?: 'destino'|'parada', endereco: string, latitude: float, longitude: float, itinerario?: array<int, array{endereco: string, latitude: float, longitude: float}>|null}  $destino
      */
     public function pedirNovoDestino(int $passageiroId, int $corridaId, array $destino): Corrida
     {
@@ -103,19 +103,38 @@ class AlterarCorridaService
             $corrida = $this->corridaDoPassageiro($passageiroId, $corridaId);
 
             if (! in_array($corrida->status_corrida, self::STATUS_ALTERAVEIS, true)) {
-                throw new RuntimeException('A corrida já terminou e o destino não pode mais ser trocado.', 409);
+                throw new RuntimeException('A corrida já terminou e o trajeto não pode mais ser alterado.', 409);
             }
 
             $semMotorista = in_array($corrida->status_corrida, ['solicitada', 'em_busca'], true);
 
             if (! $semMotorista && $this->precoNegociado($corrida)) {
                 throw new RuntimeException(
-                    'Em corridas com preço negociado o destino não muda depois do aceite. Cancele e peça uma nova corrida.',
+                    'Em corridas com preço negociado o trajeto não pode ser alterado. Cancele e peça uma nova corrida.',
                     409
                 );
             }
 
-            $orcamento = $this->orcar($corrida, $destino);
+            $tipo = $destino['tipo'] ?? 'destino';
+            $itinerario = $destino['itinerario'] ?? null;
+
+            if ($itinerario !== null) {
+                $origem = $corrida->corrida_destinos()->where('tipo', 'origem')->first();
+
+                if ($origem === null) {
+                    throw new RuntimeException('O local de embarque da corrida não foi encontrado.', 409);
+                }
+
+                // O ponto de embarque não muda nesta edição. Ele apenas abre
+                // o itinerário já existente para alterar paradas e destino.
+                $itinerario[0] = [
+                    'endereco' => $origem->endereco,
+                    'latitude' => (float) $origem->latitude,
+                    'longitude' => (float) $origem->longitude,
+                ];
+            }
+
+            $orcamento = $this->orcar($corrida, $destino, $tipo, $itinerario);
             $financeiro = $corrida->corrida_financeiro()->first();
 
             $corrida->alteracoesDestino()->where('status', 'pendente')->update([
@@ -125,9 +144,11 @@ class AlterarCorridaService
 
             $alteracao = $corrida->alteracoesDestino()->create([
                 'status' => 'pendente',
+                'tipo' => $tipo,
                 'endereco' => $destino['endereco'],
                 'latitude' => $destino['latitude'],
                 'longitude' => $destino['longitude'],
+                'itinerario' => $itinerario,
                 'distancia_km' => $orcamento['distancia_km'],
                 'tempo_min' => $orcamento['tempo_min'],
                 'valor_passageiro' => $orcamento['valor_pago_passageiro'],
@@ -136,7 +157,6 @@ class AlterarCorridaService
                 'valor_motorista_anterior' => $financeiro?->valor_motorista,
             ]);
 
-            // sem motorista ainda não há quem aprovar: vale na hora
             if ($semMotorista) {
                 $this->aplicar($corrida, $alteracao, $orcamento);
                 $alteracao->update(['status' => 'aplicada', 'respondida_em' => now()]);
@@ -191,7 +211,7 @@ class AlterarCorridaService
                     'endereco' => $pendente->endereco,
                     'latitude' => $pendente->latitude,
                     'longitude' => $pendente->longitude,
-                ]);
+                ], $pendente->tipo === 'parada' ? 'parada' : 'destino', $pendente->itinerario);
                 $this->aplicar($corrida, $pendente, $orcamento);
             }
 
@@ -247,6 +267,9 @@ class AlterarCorridaService
         return [
             'id' => $ultima->id,
             'status' => $ultima->status,
+            'tipo' => $ultima->tipo,
+            // trajeto inteiro pedido (sem o embarque), quando o passageiro editou as paradas
+            'paradas' => $ultima->itinerario === null ? null : array_column(array_slice($ultima->itinerario, 1), 'endereco'),
             'endereco' => $ultima->endereco,
             'latitude' => $ultima->latitude,
             'longitude' => $ultima->longitude,
@@ -284,9 +307,11 @@ class AlterarCorridaService
      * ponto final), mantendo a taxa de espera já contada.
      *
      * @param  array{endereco: string, latitude: float, longitude: float}  $destino
+     * @param  'destino'|'parada'  $tipo
+     * @param  array<int, array{endereco: string, latitude: float, longitude: float}>|null  $itinerario
      * @return array{distancia_km: float, tempo_min: float, valor_motorista: float, valor_pago_passageiro: float, taxa_plataforma: float, composicao: array<string, mixed>}
      */
-    private function orcar(Corrida $corrida, array $destino): array
+    private function orcar(Corrida $corrida, array $destino, string $tipo, ?array $itinerario = null): array
     {
         $tarifa = $corrida->tarifa_id === null ? null : Tarifa::find($corrida->tarifa_id);
 
@@ -294,7 +319,7 @@ class AlterarCorridaService
             throw new RuntimeException('A tarifa desta corrida não está disponível para recalcular o preço.', 409);
         }
 
-        $pontos = $corrida->corrida_destinos()
+        $pontosAtuais = $corrida->corrida_destinos()
             ->whereIn('tipo', ['origem', 'parada'])
             ->orderBy('ordem')
             ->get()
@@ -307,12 +332,44 @@ class AlterarCorridaService
             ])
             ->all();
 
-        $pontos[] = [
-            'order' => count($pontos),
-            'latitude' => (float) $destino['latitude'],
-            'longitude' => (float) $destino['longitude'],
-            'formattedAddress' => $destino['endereco'],
-        ];
+        if ($itinerario !== null) {
+            $pontos = array_map(
+                fn (array $ponto, int $indice): array => [
+                    'order' => $indice,
+                    'latitude' => (float) $ponto['latitude'],
+                    'longitude' => (float) $ponto['longitude'],
+                    'formattedAddress' => $ponto['endereco'],
+                ],
+                $itinerario,
+                array_keys($itinerario),
+            );
+        } else {
+            $pontos = $pontosAtuais;
+        }
+
+        if ($itinerario === null) {
+            $pontos[] = [
+                'order' => count($pontos),
+                'latitude' => (float) $destino['latitude'],
+                'longitude' => (float) $destino['longitude'],
+                'formattedAddress' => $destino['endereco'],
+            ];
+        }
+
+        if ($tipo === 'parada') {
+            $destinoAtual = $corrida->corrida_destinos()->where('tipo', 'destino')->first();
+
+            if ($destinoAtual === null) {
+                throw new RuntimeException('O destino atual da corrida não foi encontrado.', 409);
+            }
+
+            $pontos[] = [
+                'order' => count($pontos),
+                'latitude' => (float) $destinoAtual->latitude,
+                'longitude' => (float) $destinoAtual->longitude,
+                'formattedAddress' => $destinoAtual->endereco,
+            ];
+        }
 
         $rota = $this->estimarRotaService->executar(enderecos: $pontos);
         $distanciaKm = (float) ($rota['distancia_km'] ?? 0);
@@ -349,12 +406,36 @@ class AlterarCorridaService
      */
     private function aplicar(Corrida $corrida, CorridaAlteracaoDestino $alteracao, array $orcamento): void
     {
-        $corrida->corrida_destinos()->where('tipo', 'destino')->update([
-            'nome_local' => $alteracao->endereco,
-            'endereco' => $alteracao->endereco,
-            'latitude' => $alteracao->latitude,
-            'longitude' => $alteracao->longitude,
-        ]);
+        if ($alteracao->itinerario !== null) {
+            $this->aplicarItinerario($corrida, $alteracao->itinerario);
+        } elseif ($alteracao->tipo === 'parada') {
+            $destinoAtual = $corrida->corrida_destinos()
+                ->where('tipo', 'destino')
+                ->lockForUpdate()
+                ->first();
+
+            if ($destinoAtual === null) {
+                throw new RuntimeException('O destino atual da corrida não foi encontrado.', 409);
+            }
+
+            $ordem = (int) $destinoAtual->ordem;
+            $corrida->corrida_destinos()->where('ordem', '>=', $ordem)->increment('ordem');
+            $corrida->corrida_destinos()->create([
+                'nome_local' => $alteracao->endereco,
+                'tipo' => 'parada',
+                'ordem' => $ordem,
+                'endereco' => $alteracao->endereco,
+                'latitude' => $alteracao->latitude,
+                'longitude' => $alteracao->longitude,
+            ]);
+        } else {
+            $corrida->corrida_destinos()->where('tipo', 'destino')->update([
+                'nome_local' => $alteracao->endereco,
+                'endereco' => $alteracao->endereco,
+                'latitude' => $alteracao->latitude,
+                'longitude' => $alteracao->longitude,
+            ]);
+        }
 
         $subtotal = (float) $orcamento['composicao']['subtotal'] + (float) $orcamento['composicao']['espera_motorista'];
 
@@ -373,5 +454,46 @@ class AlterarCorridaService
         ]);
 
         $corrida->update(['distancia_total' => $orcamento['distancia_km']]);
+    }
+
+    /**
+     * @param  array<int, array{endereco: string, latitude: float, longitude: float}>  $itinerario
+     */
+    private function aplicarItinerario(Corrida $corrida, array $itinerario): void
+    {
+        $origem = $corrida->corrida_destinos()->where('tipo', 'origem')->lockForUpdate()->first();
+
+        if ($origem === null) {
+            throw new RuntimeException('O local de embarque da corrida não foi encontrado.', 409);
+        }
+
+        if (! isset($itinerario[0])) {
+            throw new RuntimeException('Informe ao menos origem e destino para atualizar o trajeto.', 422);
+        }
+
+        // parada já feita continua feita: senão o motorista teria de
+        // confirmá-la de novo e a rota do passageiro voltaria a ela
+        $chave = fn (float|string $latitude, float|string $longitude): string => sprintf('%.5f,%.5f', (float) $latitude, (float) $longitude);
+        $concluidas = $corrida->corrida_destinos()
+            ->where('tipo', 'parada')
+            ->whereNotNull('concluida_em')
+            ->get()
+            ->mapWithKeys(fn (CorridaDestino $parada) => [$chave($parada->latitude, $parada->longitude) => $parada->concluida_em])
+            ->all();
+
+        $corrida->corrida_destinos()->where('tipo', '!=', 'origem')->delete();
+
+        foreach (array_slice($itinerario, 1) as $indice => $ponto) {
+            $ultimo = $indice === count($itinerario) - 2;
+            $corrida->corrida_destinos()->create([
+                'nome_local' => $ponto['endereco'],
+                'tipo' => $ultimo ? 'destino' : 'parada',
+                'ordem' => $indice + 1,
+                'endereco' => $ponto['endereco'],
+                'latitude' => $ponto['latitude'],
+                'longitude' => $ponto['longitude'],
+                'concluida_em' => $ultimo ? null : ($concluidas[$chave($ponto['latitude'], $ponto['longitude'])] ?? null),
+            ]);
+        }
     }
 }

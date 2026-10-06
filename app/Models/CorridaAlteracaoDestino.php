@@ -10,9 +10,11 @@ use Illuminate\Support\Carbon;
  * @property int $id
  * @property int $corrida_id
  * @property string $status
+ * @property string $tipo
  * @property string $endereco
  * @property float $latitude
  * @property float $longitude
+ * @property array<int, array{endereco: string, latitude: float, longitude: float}>|null $itinerario
  * @property float $distancia_km
  * @property float $tempo_min
  * @property float $valor_passageiro
@@ -29,9 +31,11 @@ class CorridaAlteracaoDestino extends Model
     protected $fillable = [
         'corrida_id',
         'status',
+        'tipo',
         'endereco',
         'latitude',
         'longitude',
+        'itinerario',
         'distancia_km',
         'tempo_min',
         'valor_passageiro',
@@ -49,6 +53,7 @@ class CorridaAlteracaoDestino extends Model
         return [
             'latitude' => 'float',
             'longitude' => 'float',
+            'itinerario' => 'array',
             'distancia_km' => 'float',
             'tempo_min' => 'float',
             'valor_passageiro' => 'float',
