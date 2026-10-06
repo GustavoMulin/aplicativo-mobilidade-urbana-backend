@@ -309,9 +309,11 @@ class PagamentoCorridaService
      */
     public function reprocessarEstornosPendentes(): int
     {
-        $corridas = Corrida::where('status_pagamento', 'estorno_pendente')->orderBy('id')->limit(50)->get();
+        // rodízio pelo updated_at: um estorno que falha sempre não impede os outros
+        $corridas = Corrida::where('status_pagamento', 'estorno_pendente')->orderBy('updated_at')->orderBy('id')->limit(50)->get();
 
         foreach ($corridas as $corrida) {
+            $corrida->touch();
             $this->liquidarSemQuebrar($corrida);
         }
 

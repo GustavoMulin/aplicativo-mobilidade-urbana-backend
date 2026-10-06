@@ -452,6 +452,33 @@ it('estorno sem resposta não vira crédito e é refeito pelo agendador', functi
         ->and($servico->saldoCredito($passageiro->id))->toBe(0.0);
 });
 
+it('estorno que falha sempre não impede os outros de serem refeitos', function () {
+    Carbon::setTestNow('2026-10-06 10:00:00');
+    Http::fake([
+        'api.abacatepay.com/v2/transparents/refund' => function ($requisicao) {
+            if ($requisicao['id'] === 'pix_travado') {
+                throw new ConnectionException('timeout');
+            }
+
+            return Http::response(['success' => true, 'error' => null, 'data' => ['status' => 'REFUNDED']]);
+        },
+    ]);
+    $servico = app(PagamentoCorridaService::class);
+    $travada = corridaTerminada(passageiroPre(), 'cancelada', 'pix', 20.0, ['cancelado_por' => 'motorista', 'status_pagamento' => 'estorno_pendente']);
+    pixPago($travada, 20.0, 'pix_travado');
+
+    Carbon::setTestNow('2026-10-06 10:01:00');
+    $outra = corridaTerminada(passageiroPre(), 'cancelada', 'pix', 20.0, ['cancelado_por' => 'motorista', 'status_pagamento' => 'estorno_pendente']);
+    pixPago($outra, 20.0, 'pix_normal');
+
+    Carbon::setTestNow('2026-10-06 10:05:00');
+    $servico->reprocessarEstornosPendentes();
+
+    expect($travada->fresh()->status_pagamento)->toBe('estorno_pendente')
+        ->and($outra->fresh()->status_pagamento)->toBe('estornado')
+        ->and($travada->fresh()->updated_at->toDateTimeString())->toBe('2026-10-06 10:05:00');
+});
+
 it('estorno recusado sem conseguir conferir a cobrança não vira crédito', function () {
     Http::fake([
         'api.abacatepay.com/v2/transparents/refund' => Http::response(['success' => false, 'error' => 'indisponível'], 500),
