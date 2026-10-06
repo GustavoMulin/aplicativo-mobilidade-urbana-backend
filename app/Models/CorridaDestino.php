@@ -21,5 +21,16 @@ class CorridaDestino extends Model
         'longitude',
         'tempo_estimado_ate_proximo_destino',
         'distancia_ate_proximo_destino',
+        'concluida_em',
     ];
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'concluida_em' => 'datetime',
+        ];
+    }
 }

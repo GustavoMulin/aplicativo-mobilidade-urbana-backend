@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Usuario\LocaisSalvosController;
 use App\Http\Controllers\Usuario\UsuarioController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -14,6 +15,11 @@ Route::post('usuario-deletar', [UsuarioController::class, 'usuarioDeletar']);
 Route::post('usuario-restaurar', [UsuarioController::class, 'usuarioRestaurar']);
 Route::get('usuarios-arquivados', [UsuarioController::class, 'usuariosArquivados']);
 Route::put('usuario-alterar-foto-perfil/{id}', [UsuarioController::class, 'alterarFotoPerfil']);
+
+// casa, trabalho e favoritos do passageiro
+Route::get('locais-salvos', [LocaisSalvosController::class, 'index']);
+Route::post('locais-salvos', [LocaisSalvosController::class, 'store']);
+Route::delete('locais-salvos/{localSalvo}', [LocaisSalvosController::class, 'destroy'])->whereNumber('localSalvo');
 
 Route::get('/user', function (Request $request) {
     /** @var JWTGuard */

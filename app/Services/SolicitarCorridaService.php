@@ -17,6 +17,7 @@ use RuntimeException;
 class SolicitarCorridaService
 {
     private const STATUS_ATIVOS = [
+        'aguardando_pagamento',
         'solicitada',
         'em_busca',
         'aceita',
@@ -37,8 +38,18 @@ class SolicitarCorridaService
         }
 
         $passageiro = Passageiro::firstOrCreate(['user_id' => $usuario->id]);
+        $pagamento = app(PagamentoCorridaService::class);
 
-        return DB::transaction(function () use ($cotacao, $categoria, $passageiro, $metodoPagamento) {
+        // valor em aberto de corrida anterior bloqueia qualquer novo pedido
+        $pagamento->exigirSemPendencia($passageiro->id);
+
+        $prePago = $pagamento->ehPrePago($metodoPagamento);
+
+        $corrida = DB::transaction(function () use ($cotacao, $categoria, $passageiro, $metodoPagamento, $prePago, $pagamento) {
+            // trava o passageiro: dois pedidos simultâneos não criam duas
+            // corridas ativas nem gastam o mesmo crédito
+            Passageiro::whereKey($passageiro->id)->lockForUpdate()->first();
+
             $travada = CotacaoCorrida::whereKey($cotacao->getKey())->lockForUpdate()->first();
 
             if ($travada === null || $travada->consumida()) {
@@ -59,7 +70,8 @@ class SolicitarCorridaService
                 'tarifa_id' => $categoria['tarifa_id'] ?? null,
                 'passageiro_id' => $passageiro->id,
                 'cidade_id' => $cotacao->cidade_id,
-                'status_corrida' => 'solicitada',
+                // pré-pago: invisível aos motoristas até o pagamento ser confirmado
+                'status_corrida' => $prePago ? 'aguardando_pagamento' : 'solicitada',
                 'tempo_solicitacao' => now(),
                 'distancia_total' => $cotacao->distancia_km,
                 'valor_estimado_inicial' => $categoria['valores']['valor_passageiro'],
@@ -70,12 +82,58 @@ class SolicitarCorridaService
             $this->gravarDestinos($corrida, $cotacao);
             $this->gravarFinanceiro($corrida, $categoria, $metodoPagamento);
 
+            if ($prePago) {
+                $valor = (float) $categoria['valores']['valor_passageiro'];
+                $usado = $pagamento->aplicarCredito($corrida, $valor);
+
+                // crédito cobriu tudo: já pode procurar motorista
+                if ($valor - $usado <= 0.009) {
+                    $corrida->update(['status_corrida' => 'solicitada', 'status_pagamento' => 'pago']);
+                }
+            }
+
             $travada->update(['consumida_em' => now()]);
 
-            Avisar::semQuebrar(new CorridasDisponiveisAlteradas);
+            if ($corrida->status_corrida === 'solicitada') {
+                Avisar::semQuebrar(new CorridasDisponiveisAlteradas);
+            }
 
-            return $corrida->fresh(['corrida_destinos', 'corrida_financeiro']);
+            return $corrida;
         });
+
+        if ($corrida->status_corrida === 'aguardando_pagamento') {
+            $this->gerarCobranca($corrida, $pagamento);
+        }
+
+        return $corrida->fresh(['corrida_destinos', 'corrida_financeiro']);
+    }
+
+    /**
+     * Gera o Pix ou o checkout do cartão logo após criar a corrida. Se a
+     * AbacatePay falhar, a corrida é cancelada sem cobrança (e o crédito volta).
+     */
+    private function gerarCobranca(Corrida $corrida, PagamentoCorridaService $pagamento): void
+    {
+        try {
+            if ($corrida->metodo_pagamento === 'pix') {
+                app(CobrancaPixService::class)->paraCorrida($corrida);
+            } else {
+                app(CobrancaCartaoService::class)->paraCorrida($corrida);
+            }
+        } catch (RuntimeException $erro) {
+            $corrida->update([
+                'status_corrida' => 'cancelada',
+                'cancelado_por' => 'sistema',
+                'motivo_cancelamento' => 'Não foi possível gerar o pagamento.',
+            ]);
+            $pagamento->liquidarSemQuebrar($corrida);
+
+            throw new RuntimeException(
+                'Não foi possível gerar o pagamento agora. Tente de novo ou escolha pagar em dinheiro.',
+                409,
+                $erro
+            );
+        }
     }
 
     private function gravarDestinos(Corrida $corrida, CotacaoCorrida $cotacao): void

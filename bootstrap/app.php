@@ -9,6 +9,7 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use PHPOpenSourceSaver\JWTAuth\Providers\LaravelServiceProvider;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -50,5 +51,12 @@ return Application::configure(basePath: dirname(__DIR__))
                 // CODEX: mantém também as falhas de autenticação em português.
                 'message' => 'Não autenticado.',
             ], 401);
+        });
+
+        // 404 de API sem detalhes internos (caminhos/stack) mesmo com APP_DEBUG=true.
+        $exceptions->render(function (NotFoundHttpException $e, Request $request) {
+            return $request->expectsJson()
+                ? response()->json(['message' => 'Recurso não encontrado.'], 404)
+                : null;
         });
     })->create();

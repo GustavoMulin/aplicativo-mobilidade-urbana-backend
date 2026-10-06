@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Corrida;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Motorista\MotoristaCadastroController;
 use App\Models\Motorista;
+use App\Services\AlterarCorridaService;
 use App\Services\DespachoCorridaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -129,6 +130,42 @@ class CorridaMotoristaController extends Controller
         } catch (RuntimeException $excecao) {
             return response()->json(['message' => $excecao->getMessage()], $this->status($excecao));
         }
+
+        return response()->json($atualizada);
+    }
+
+    public function confirmarParada(Request $request, int $corrida): JsonResponse
+    {
+        $motorista = $this->motoristaDoUsuario($request);
+
+        if ($motorista === null) {
+            return $this->negarPorCadastro();
+        }
+
+        try {
+            $atualizada = $this->despachoCorridaService->confirmarParada($motorista, $corrida);
+        } catch (RuntimeException $excecao) {
+            return response()->json(['message' => $excecao->getMessage()], $this->status($excecao));
+        }
+
+        return response()->json($atualizada);
+    }
+
+    public function responderNovoDestino(Request $request, int $corrida, int $alteracao, string $resposta, AlterarCorridaService $alterarCorrida): JsonResponse
+    {
+        $motorista = $this->motoristaDoUsuario($request);
+
+        if ($motorista === null) {
+            return $this->negarPorCadastro();
+        }
+
+        try {
+            $atualizada = $alterarCorrida->responderNovoDestino($motorista, $corrida, $alteracao, $resposta === 'aceitar');
+        } catch (RuntimeException $excecao) {
+            return response()->json(['message' => $excecao->getMessage()], $this->status($excecao));
+        }
+
+        $atualizada->setAttribute('alteracao_destino', $alterarCorrida->resumo($atualizada));
 
         return response()->json($atualizada);
     }

@@ -16,6 +16,8 @@ Route::delete('motorista/cadastro/documentos/{documento}', [MotoristaCadastroCon
 Route::post('motorista/cadastro/aprovar-dev', [MotoristaCadastroController::class, 'aprovarDev']);
 Route::get('motorista/me/veiculos', [MotoristaController::class, 'meusVeiculos']);
 Route::post('motorista/me/veiculos', [MotoristaController::class, 'cadastrarMeuVeiculo']);
+Route::get('motorista/me/estatisticas', [MotoristaController::class, 'estatisticas']);
+Route::get('motorista/me/ganhos', [MotoristaController::class, 'ganhos']);
 
 Route::get('motorista-veiculos/{motoristaId}', [MotoristaController::class, 'motoristaVeiculos']);
 Route::apiResource('motoristas', MotoristaController::class);
