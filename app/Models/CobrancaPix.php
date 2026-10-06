@@ -17,6 +17,7 @@ use Illuminate\Support\Carbon;
  * @property bool $dev_mode
  * @property Carbon|null $expira_em
  * @property Carbon|null $pago_em
+ * @property Carbon|null $estornado_em
  */
 class CobrancaPix extends Model
 {
@@ -32,6 +33,7 @@ class CobrancaPix extends Model
         'dev_mode',
         'expira_em',
         'pago_em',
+        'estornado_em',
     ];
 
     /**
@@ -43,6 +45,7 @@ class CobrancaPix extends Model
             'dev_mode' => 'boolean',
             'expira_em' => 'datetime',
             'pago_em' => 'datetime',
+            'estornado_em' => 'datetime',
         ];
     }
 

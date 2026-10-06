@@ -16,6 +16,7 @@ use Illuminate\Support\Carbon;
  * @property int $valor_centavos
  * @property bool $dev_mode
  * @property Carbon|null $pago_em
+ * @property Carbon|null $estornado_em
  */
 class CobrancaCartao extends Model
 {
@@ -30,6 +31,7 @@ class CobrancaCartao extends Model
         'valor_centavos',
         'dev_mode',
         'pago_em',
+        'estornado_em',
     ];
 
     /**
@@ -40,6 +42,7 @@ class CobrancaCartao extends Model
         return [
             'dev_mode' => 'boolean',
             'pago_em' => 'datetime',
+            'estornado_em' => 'datetime',
         ];
     }
 
