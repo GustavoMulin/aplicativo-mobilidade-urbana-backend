@@ -31,7 +31,9 @@ class DespachoCorridaService
     ];
 
     public function __construct(
-        private readonly ContabilizarEsperaCorridaService $contabilizarEsperaCorridaService
+        private readonly ContabilizarEsperaCorridaService $contabilizarEsperaCorridaService,
+        private readonly NotificarUsuarioService $notificarUsuario,
+        private readonly PagamentoCorridaService $pagamento,
     ) {}
 
     public function atualizarDisponibilidade(
@@ -157,11 +159,22 @@ class DespachoCorridaService
         $reputacoes = $this->reputacoesDosPassageiros($corridas);
         $raios = $this->raiosDasTarifas($corridas);
 
-        return $corridas
+        $ofertas = $corridas
             ->map(fn (Corrida $corrida) => $this->montarOferta($corrida, $status, $reputacoes, $raios))
             ->filter()
             ->sortBy('distancia_ate_origem_km')
             ->values();
+
+        // base da taxa de aceitação: cada corrida conta uma vez por motorista
+        if ($ofertas->isNotEmpty()) {
+            DB::table('ofertas_motorista')->insertOrIgnore($ofertas->map(fn (array $oferta) => [
+                'motorista_id' => $motorista->id,
+                'corrida_id' => $oferta['corrida_id'],
+                'ofertada_em' => now(),
+            ])->all());
+        }
+
+        return $ofertas;
     }
 
     public function aceitar(Motorista $motorista, int $corridaId): Corrida
@@ -260,7 +273,7 @@ class DespachoCorridaService
     ];
 
     private const CANCELAVEL_POR = [
-        'passageiro' => ['solicitada', 'em_busca', 'aceita', 'motorista_chegou'],
+        'passageiro' => ['aguardando_pagamento', 'solicitada', 'em_busca', 'aceita', 'motorista_chegou'],
         'motorista' => ['aceita', 'motorista_chegou'],
     ];
 
@@ -272,7 +285,7 @@ class DespachoCorridaService
             throw new RuntimeException('Ação desconhecida.', 422);
         }
 
-        return DB::transaction(function () use ($motorista, $corridaId, $regra) {
+        $atualizada = DB::transaction(function () use ($motorista, $corridaId, $regra) {
             $corrida = Corrida::whereKey($corridaId)->lockForUpdate()->first();
 
             if ($corrida === null || $corrida->motorista_id !== $motorista->id) {
@@ -305,19 +318,77 @@ class DespachoCorridaService
             if ($regra['para'] === 'finalizada') {
                 StatusBusca::where('motorista_id', $motorista->id)
                     ->update(['disponivel' => true, 'visto_em' => now()]);
+
+                $this->notificarFinalizacao($corrida, $motorista->user_id);
             }
 
             Avisar::semQuebrar(new CorridaAtualizada($corrida->id, $regra['para']));
 
             return $corrida->fresh(['corrida_destinos', 'corrida_financeiro']);
         });
+
+        // fora da transação: pode chamar a AbacatePay (estorno)
+        if ($atualizada->status_corrida === 'finalizada') {
+            $this->pagamento->liquidarSemQuebrar($atualizada);
+        }
+
+        return $atualizada->fresh(['corrida_destinos', 'corrida_financeiro']);
+    }
+
+    /**
+     * Marca a próxima parada pendente (menor ordem) como concluída. A
+     * navegação do motorista e o acompanhamento do passageiro passam a
+     * apontar para o ponto seguinte.
+     */
+    public function confirmarParada(Motorista $motorista, int $corridaId): Corrida
+    {
+        return DB::transaction(function () use ($motorista, $corridaId) {
+            $corrida = Corrida::whereKey($corridaId)->lockForUpdate()->first();
+
+            if ($corrida === null || $corrida->motorista_id !== $motorista->id) {
+                throw new RuntimeException('Corrida não encontrada.', 404);
+            }
+
+            if ($corrida->status_corrida !== 'em_andamento') {
+                throw new RuntimeException('As paradas são confirmadas durante a viagem.', 409);
+            }
+
+            $parada = $corrida->corrida_destinos()
+                ->where('tipo', 'parada')
+                ->whereNull('concluida_em')
+                ->orderBy('ordem')
+                ->first();
+
+            if ($parada === null) {
+                throw new RuntimeException('Não há parada pendente nesta corrida.', 409);
+            }
+
+            $parada->update(['concluida_em' => now()]);
+
+            Avisar::semQuebrar(new CorridaAtualizada($corrida->id, $corrida->status_corrida));
+
+            return $corrida->fresh(['corrida_destinos', 'corrida_financeiro']);
+        });
+    }
+
+    private function notificarFinalizacao(Corrida $corrida, int $userIdMotorista): void
+    {
+        $corrida->loadMissing(['corrida_financeiro', 'passageiro']);
+        $ganho = number_format((float) $corrida->corrida_financeiro?->valor_liquido_motorista, 2, ',', '.');
+        $pago = number_format((float) $corrida->corrida_financeiro?->valor_pago_passageiro, 2, ',', '.');
+
+        $this->notificarUsuario->executar($userIdMotorista, 'Corrida finalizada', "Você recebe R$ {$ganho} por esta corrida.");
+
+        if ($corrida->passageiro?->user_id !== null) {
+            $this->notificarUsuario->executar($corrida->passageiro->user_id, 'Viagem concluída', "Valor da corrida: R$ {$pago}.");
+        }
     }
 
     public function cancelar(int $corridaId, string $quem, ?int $donoId, ?string $motivo, ?string $tipo = null, ?float $taxaConfirmada = null): Corrida
     {
         $permitidos = self::CANCELAVEL_POR[$quem] ?? [];
 
-        return DB::transaction(function () use ($corridaId, $quem, $donoId, $motivo, $tipo, $permitidos, $taxaConfirmada) {
+        $cancelada = DB::transaction(function () use ($corridaId, $quem, $donoId, $motivo, $tipo, $permitidos, $taxaConfirmada) {
             $corrida = Corrida::whereKey($corridaId)->lockForUpdate()->first();
 
             $campo = $quem === 'motorista' ? 'motorista_id' : 'passageiro_id';
@@ -356,7 +427,7 @@ class DespachoCorridaService
                     || $posicao->visto_em->lt(now()->subMinutes(2))
                     || $this->distanciaKm((float) $posicao->latitude, (float) $posicao->longitude,
                         (float) $origem->latitude, (float) $origem->longitude) > 0.5) {
-                    throw new RuntimeException('Atualize sua localização perto do embarque para registrar a ausência.', 409);
+                    throw new RuntimeException('Você precisa estar a até 500 m do embarque para registrar a ausência.', 409);
                 }
 
                 $this->aplicarTaxaAusencia($corrida);
@@ -399,6 +470,11 @@ class DespachoCorridaService
 
             return $corrida->fresh(['corrida_destinos', 'corrida_financeiro']);
         });
+
+        // estorno, crédito ou pendência, fora da transação
+        $this->pagamento->liquidarSemQuebrar($cancelada);
+
+        return $cancelada->fresh(['corrida_destinos', 'corrida_financeiro']);
     }
 
     public function cancelarEsperasExpiradas(): int
@@ -449,6 +525,13 @@ class DespachoCorridaService
                 $cancelada = false;
             }
 
+            if ($cancelada) {
+                $expirada = Corrida::find((int) $corridaId);
+                if ($expirada !== null) {
+                    $this->pagamento->liquidarSemQuebrar($expirada);
+                }
+            }
+
             $canceladas += (int) $cancelada;
         }
 
@@ -466,10 +549,10 @@ class DespachoCorridaService
         if ($tarifaBase <= 0 && $corrida->tarifa_id !== null) {
             $tarifaBase = (float) Tarifa::whereKey($corrida->tarifa_id)->value('tarifa_base');
         }
+        // categoria sem tarifa base (ex.: Negocia) encerra por ausência sem
+        // taxa: recusar aqui deixava o motorista preso no embarque e travava
+        // o cancelamento automático da espera
         $taxa = round(max(0, $tarifaBase), 2);
-        if ($taxa <= 0) {
-            throw new RuntimeException('A tarifa base da categoria não está configurada.', 409);
-        }
 
         $financeiro->update([
             'valor_bruto' => $taxa,
@@ -664,7 +747,7 @@ class DespachoCorridaService
 
         $status = $corrida->status_corrida;
 
-        if (in_array($status, ['solicitada', 'em_busca'], true)) {
+        if (in_array($status, ['aguardando_pagamento', 'solicitada', 'em_busca'], true)) {
             return $gratis('Nenhum motorista aceitou sua corrida ainda.');
         }
 

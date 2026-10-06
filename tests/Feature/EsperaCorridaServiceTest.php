@@ -232,6 +232,35 @@ it('registra apenas a tarifa base ao cancelar por ausência e mantém motorista 
     ))->toThrow(RuntimeException::class);
 });
 
+it('encerra por ausência sem taxa quando a categoria não tem tarifa base', function () {
+    Carbon::setTestNow('2026-09-18 12:00:00');
+    [$corrida, $motorista] = criarCorridaEspera(5 * 60);
+    prepararCancelamentoPorAusencia($corrida, $motorista);
+    $corrida->corrida_financeiro()->update(['tarifa_base' => 0]);
+    Tarifa::whereKey($corrida->tarifa_id)->update(['tarifa_base' => 0]);
+
+    $cancelada = app(DespachoCorridaService::class)->cancelar(
+        $corrida->id, 'motorista', $motorista->id, 'Passageiro ausente', 'nao_comparecimento'
+    );
+
+    expect($cancelada->status_corrida)->toBe('cancelada')
+        ->and($cancelada->tipo_cancelamento)->toBe('nao_comparecimento')
+        ->and((float) $cancelada->corrida_financeiro->taxa_cancelamento)->toBe(0.0)
+        ->and((float) $cancelada->corrida_financeiro->valor_pago_passageiro)->toBe(0.0)
+        ->and((float) $cancelada->corrida_financeiro->valor_liquido_motorista)->toBe(0.0);
+});
+
+it('cancelamento automático da espera não trava em categoria sem tarifa base', function () {
+    Carbon::setTestNow('2026-09-18 12:00:00');
+    [$corrida, $motorista] = criarCorridaEspera(12 * 60);
+    prepararCancelamentoPorAusencia($corrida, $motorista);
+    $corrida->corrida_financeiro()->update(['tarifa_base' => 0]);
+    Tarifa::whereKey($corrida->tarifa_id)->update(['tarifa_base' => 0]);
+
+    expect(app(DespachoCorridaService::class)->cancelarEsperasExpiradas())->toBe(1)
+        ->and($corrida->fresh()->status_corrida)->toBe('cancelada');
+});
+
 it('cancela e cobra automaticamente ao atingir doze minutos de espera', function () {
     Carbon::setTestNow('2026-09-18 12:00:00');
     [$corridaAntes, $motoristaAntes] = criarCorridaEspera((12 * 60) - 1);

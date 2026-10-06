@@ -41,6 +41,70 @@ class MotoristaController extends Controller
     }
 
     /**
+     * Ganhos reais do motorista: o do dia (corridas finalizadas hoje) e o saldo
+     * acumulado. Não há saques registrados, então o saldo é tudo que foi ganho.
+     */
+    public function ganhos(Request $request): JsonResponse
+    {
+        $motorista = Motorista::where('user_id', $request->user()->id)->first();
+
+        if ($motorista === null) {
+            return response()->json(['message' => 'Cadastro de motorista não encontrado.'], 403);
+        }
+
+        $finalizadas = DB::table('corridas')
+            ->join('corrida_financeiros', 'corrida_financeiros.corrida_id', '=', 'corridas.id')
+            ->where('corridas.motorista_id', $motorista->id)
+            ->where('corridas.status_corrida', 'finalizada');
+
+        $hoje = now();
+
+        return response()->json([
+            'data' => $hoje->translatedFormat('d/m'),
+            'ganhos_do_dia' => round((float) (clone $finalizadas)
+                ->whereDate('corridas.tempo_final', $hoje->toDateString())
+                ->sum('corrida_financeiros.valor_liquido_motorista'), 2),
+            'saldo' => round((float) (clone $finalizadas)->sum('corrida_financeiros.valor_liquido_motorista'), 2),
+            'corridas_hoje' => (clone $finalizadas)
+                ->whereDate('corridas.tempo_final', $hoje->toDateString())
+                ->count(),
+        ]);
+    }
+
+    /**
+     * Números reais do motorista para o menu lateral. A finalização vem das
+     * corridas aceitas; a aceitação, das corridas ofertadas (ofertas_motorista)
+     * que ele acabou aceitando.
+     */
+    public function estatisticas(Request $request): JsonResponse
+    {
+        $motorista = Motorista::where('user_id', $request->user()->id)->first();
+
+        if ($motorista === null) {
+            return response()->json(['message' => 'Cadastro de motorista não encontrado.'], 403);
+        }
+
+        $corridas = DB::table('corridas')->where('motorista_id', $motorista->id);
+        $aceitas = (clone $corridas)->whereNotNull('tempo_aceite')->count();
+        $finalizadas = (clone $corridas)->where('status_corrida', 'finalizada')->count();
+
+        $ofertadas = DB::table('ofertas_motorista')->where('ofertas_motorista.motorista_id', $motorista->id);
+        $total = (clone $ofertadas)->count();
+        $aceitasDasOfertas = (clone $ofertadas)
+            ->join('corridas', 'corridas.id', '=', 'ofertas_motorista.corrida_id')
+            ->where('corridas.motorista_id', $motorista->id)
+            ->whereNotNull('corridas.tempo_aceite')
+            ->count();
+
+        return response()->json([
+            'corridas_aceitas' => $aceitas,
+            'corridas_finalizadas' => $finalizadas,
+            'taxa_finalizacao' => $aceitas > 0 ? round($finalizadas / $aceitas * 100) : null,
+            'taxa_aceitacao' => $total > 0 ? round($aceitasDasOfertas / $total * 100) : null,
+        ]);
+    }
+
+    /**
      * Cadastra e vincula um veículo à própria conta, sem confiar em IDs
      * de motorista enviados pelo aplicativo.
      */

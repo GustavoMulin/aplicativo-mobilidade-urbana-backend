@@ -27,7 +27,7 @@ class CenarioCorridaDesenvolvimentoSeeder extends Seeder
                 [
                     'name' => 'Motorista Teste',
                     'telefone' => self::TELEFONE_MOTORISTA,
-                    'cpf' => '90000000001',
+                    'cpf' => '52998224725',
                     'data_nascimento' => '1990-01-01',
                     'foto' => null,
                     'foto_thumbnail' => null,
@@ -98,7 +98,7 @@ class CenarioCorridaDesenvolvimentoSeeder extends Seeder
                 [
                     'name' => 'Passageiro Teste',
                     'telefone' => self::TELEFONE_PASSAGEIRO,
-                    'cpf' => '90000000002',
+                    'cpf' => '11144477735',
                     'data_nascimento' => '1990-01-01',
                     'foto' => null,
                     'foto_thumbnail' => null,
