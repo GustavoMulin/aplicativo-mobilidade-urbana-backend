@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class MotoristaDocumento extends Model
 {
+    protected $table = 'motorista_documentos_anexos';
+
     protected $fillable = [
         'motorista_id',
         'tipo_documento',
@@ -16,7 +18,7 @@ class MotoristaDocumento extends Model
         'size',
         'path',
         'status',
-        'observacao',
+        'url',
     ];
 
     /** @return array<string, string> */

@@ -6,19 +6,20 @@ use App\Enums\TipoDocumentoMotorista;
 use App\Http\Controllers\Controller;
 use App\Models\Motorista;
 use App\Models\MotoristaDocumento;
+use App\Services\ArmazenarAnexoMotoristaService;
 use App\Services\AtualizarSituacaoMotoristaService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Throwable;
 
 class MotoristaDocumentoController extends Controller
 {
     public function __construct(
-        protected AtualizarSituacaoMotoristaService $atualizarSituacaoMotoristaService
+        protected AtualizarSituacaoMotoristaService $atualizarSituacaoMotoristaService,
+        protected ArmazenarAnexoMotoristaService $armazenarAnexoMotoristaService
     ) {}
 
     public function tipos(): JsonResponse
@@ -45,7 +46,7 @@ class MotoristaDocumentoController extends Controller
             ...$tipo,
             'id' => null,
             'status' => null,
-            'observacao' => null,
+            'url' => null,
             ...($documentos->get($tipo['tipo_documento'])?->toArray() ?? []),
         ], TipoDocumentoMotorista::catalogo());
 
@@ -84,12 +85,11 @@ class MotoristaDocumentoController extends Controller
             'cnh.observacao' => 'nullable|string|max:5000',
         ]);
 
-        $file = $request->file('arquivo');
-        $path = $file->store('motorista_documentos', 'local');
-        abort_if($path === false, 500, 'Não foi possível armazenar o arquivo.');
+        $anexo = $this->armazenarAnexoMotoristaService->salvar($request->file('arquivo'), $request);
+        $path = $anexo['path'];
 
         try {
-            $resultado = DB::transaction(function () use ($dados, $file, $path): array {
+            $resultado = DB::transaction(function () use ($dados, $anexo): array {
                 $motorista = Motorista::lockForUpdate()->findOrFail($dados['motorista_id']);
 
                 if ($dados['tipo_documento'] === TipoDocumentoMotorista::CNH->value && isset($dados['cnh'])) {
@@ -99,11 +99,7 @@ class MotoristaDocumentoController extends Controller
                 $motoristaDocumento = MotoristaDocumento::create([
                     'motorista_id' => $motorista->id,
                     'tipo_documento' => $dados['tipo_documento'],
-                    'name' => $file->getClientOriginalName(),
-                    'type' => $file->extension(),
-                    'mime_type' => $file->getMimeType(),
-                    'size' => $file->getSize(),
-                    'path' => $path,
+                    ...$anexo,
                     'status' => 'em_analise',
                 ]);
 
@@ -116,7 +112,7 @@ class MotoristaDocumentoController extends Controller
                 ];
             });
         } catch (Throwable $exception) {
-            Storage::disk('local')->delete($path);
+            $this->armazenarAnexoMotoristaService->excluir($path);
             throw $exception;
         }
 
@@ -157,10 +153,7 @@ class MotoristaDocumentoController extends Controller
             ], 404);
         }
 
-        // Verifica e deleta o arquivo no storage PRIVATE (local)
-        if ($motoristaDocumento->path && Storage::disk('local')->exists($motoristaDocumento->path)) {
-            Storage::disk('local')->delete($motoristaDocumento->path);
-        }
+        $this->armazenarAnexoMotoristaService->excluir($motoristaDocumento->path);
 
         // Remove do banco (soft delete)
         $motoristaId = $motoristaDocumento->motorista_id;
@@ -181,7 +174,6 @@ class MotoristaDocumentoController extends Controller
     {
         $dados = $request->validate([
             'status' => 'required|in:em_analise,aprovado,reprovado',
-            'observacao' => 'nullable|string|max:500',
         ]);
 
         $motoristaDocumento = MotoristaDocumento::findOrFail($motoristaDocumentoId);
@@ -196,10 +188,6 @@ class MotoristaDocumentoController extends Controller
         }
 
         $motoristaDocumento->status = $dados['status'];
-
-        if (array_key_exists('observacao', $dados)) {
-            $motoristaDocumento->observacao = $dados['observacao'];
-        }
 
         $motoristaDocumento->saveOrFail();
 
