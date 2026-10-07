@@ -49,7 +49,7 @@ class MotoristaCadastroController extends Controller
 
         $documentos = MotoristaDocumento::where('motorista_id', $motorista->id)
             ->orderByDesc('id')
-            ->get(['tipo_documento', 'status', 'url', 'verso'])
+            ->get(['tipo_documento', 'status', 'url', 'verso', 'motivo_reprovacao', 'descricao_reprovacao'])
             ->unique('tipo_documento')
             ->values();
 

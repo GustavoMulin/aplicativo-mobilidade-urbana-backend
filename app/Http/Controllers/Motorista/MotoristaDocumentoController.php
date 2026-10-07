@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Motorista;
 
+use App\Enums\MotivoReprovacaoDocumento;
 use App\Enums\TipoDocumentoMotorista;
 use App\Http\Controllers\Controller;
 use App\Models\Motorista;
@@ -27,6 +28,11 @@ class MotoristaDocumentoController extends Controller
     public function tipos(): JsonResponse
     {
         return response()->json(['data' => TipoDocumentoMotorista::catalogo()]);
+    }
+
+    public function motivosReprovacao(): JsonResponse
+    {
+        return response()->json(['data' => MotivoReprovacaoDocumento::catalogo()]);
     }
 
     public function resumo(int $motoristaId): JsonResponse
@@ -195,6 +201,8 @@ class MotoristaDocumentoController extends Controller
     {
         $dados = $request->validate([
             'status' => 'required|in:em_analise,aprovado,reprovado',
+            'motivo_reprovacao' => ['exclude_unless:status,reprovado', 'required', Rule::enum(MotivoReprovacaoDocumento::class)],
+            'descricao_reprovacao' => ['exclude_unless:status,reprovado', 'exclude_unless:motivo_reprovacao,outro', 'required', 'string', 'max:2000'],
         ]);
 
         $motoristaDocumento = MotoristaDocumento::findOrFail($motoristaDocumentoId);
@@ -208,20 +216,23 @@ class MotoristaDocumentoController extends Controller
         //     ], 403);
         // }
 
-        $motoristaDocumento->status = $dados['status'];
+        $situacao = DB::transaction(function () use ($motoristaDocumento, $dados): ?string {
+            $registro = MotoristaDocumento::lockForUpdate()->findOrFail($motoristaDocumento->id);
+            $reprovado = $dados['status'] === 'reprovado';
+            $registro->update([
+                'status' => $dados['status'],
+                'motivo_reprovacao' => $reprovado ? $dados['motivo_reprovacao'] : null,
+                'descricao_reprovacao' => $reprovado && $dados['motivo_reprovacao'] === MotivoReprovacaoDocumento::OUTRO->value
+                    ? $dados['descricao_reprovacao'] : null,
+            ]);
+            $motorista = Motorista::lockForUpdate()->find($registro->motorista_id);
 
-        $motoristaDocumento->saveOrFail();
-
-        // a liberação do motorista é derivada dos documentos: sem isto o
-        // painel aprovava o documento e o motorista continuava pendente
-        $motorista = Motorista::find($motoristaDocumento->motorista_id);
-
-        $situacao = $motorista === null
-            ? null
-            : $this->atualizarSituacaoMotoristaService->executar($motorista);
+            return $motorista === null ? null : $this->atualizarSituacaoMotoristaService->executar($motorista);
+        });
 
         return response()->json([
             'message' => 'Status do documento alterado com sucesso',
+            'data' => $motoristaDocumento->fresh(),
             'situacao_motorista' => $situacao,
         ]);
     }

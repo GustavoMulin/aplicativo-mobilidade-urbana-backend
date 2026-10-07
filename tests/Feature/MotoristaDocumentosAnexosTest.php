@@ -109,7 +109,7 @@ it('reprova o anexo sem exigir ou gravar observacao da analise', function () {
         'name' => 'cnh.pdf', 'type' => 'pdf', 'mime_type' => 'application/pdf',
         'size' => 10, 'path' => 'motorista_documentos_anexos/cnh.pdf', 'status' => 'em_analise',
     ]);
-    $this->putJson('/api/mudar-status-documento/'.$documento->id, ['status' => 'reprovado'])->assertOk();
+    $this->putJson('/api/mudar-status-documento/'.$documento->id, ['status' => 'reprovado', 'motivo_reprovacao' => 'ilegivel'])->assertOk();
     expect($documento->fresh()->status)->toBe('reprovado')
         ->and($documento->fresh()->getAttributes())->not->toHaveKey('observacao')
         ->and($this->motorista->fresh()->status)->toBe('reprovado');
