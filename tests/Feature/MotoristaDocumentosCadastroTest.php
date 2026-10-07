@@ -30,6 +30,7 @@ it('aceita PDF e imagem do próprio motorista e mostra só o envio mais recente'
     $this->actingAs($usuario, 'jwt')->post('/api/motorista/cadastro/documentos', [
         'tipo_documento' => 'cnh',
         'arquivo' => UploadedFile::fake()->create('nova-cnh.png', 100, 'image/png'),
+        'arquivo_verso' => UploadedFile::fake()->create('nova-cnh-verso.png', 100, 'image/png'),
     ], ['Accept' => 'application/json'])->assertCreated();
 
     $motorista = Motorista::where('user_id', $usuario->id)->firstOrFail();

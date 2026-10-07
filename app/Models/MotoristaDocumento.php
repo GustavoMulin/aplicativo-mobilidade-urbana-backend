@@ -19,11 +19,12 @@ class MotoristaDocumento extends Model
         'path',
         'status',
         'url',
+        'verso',
     ];
 
     /** @return array<string, string> */
     protected function casts(): array
     {
-        return ['tipo_documento' => TipoDocumentoMotorista::class];
+        return ['tipo_documento' => TipoDocumentoMotorista::class, 'verso' => 'array'];
     }
 }

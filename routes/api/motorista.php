@@ -25,5 +25,6 @@ Route::post('adicionar-veiculo-ao-motorista', [MotoristaController::class, 'adic
 
 Route::get('motorista-documentos/tipos', [MotoristaDocumentoController::class, 'tipos']);
 Route::get('motorista-documentos/{motoristaId}/resumo', [MotoristaDocumentoController::class, 'resumo']);
+Route::get('motorista-documentos/{motoristaDocumentoId}/download', [MotoristaDocumentoController::class, 'baixar']);
 Route::apiResource('motorista-documentos', MotoristaDocumentoController::class);
 Route::put('mudar-status-documento/{motoristaDocumentoId}', [MotoristaDocumentoController::class, 'mudarStatusDocumento']);

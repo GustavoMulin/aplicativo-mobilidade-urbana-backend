@@ -12,7 +12,9 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Throwable;
 
 class MotoristaDocumentoController extends Controller
@@ -47,10 +49,29 @@ class MotoristaDocumentoController extends Controller
             'id' => null,
             'status' => null,
             'url' => null,
+            'verso' => null,
             ...($documentos->get($tipo['tipo_documento'])?->toArray() ?? []),
         ], TipoDocumentoMotorista::catalogo());
 
         return response()->json(['data' => $dados]);
+    }
+
+    public function baixar(Request $request, int $motoristaDocumentoId): StreamedResponse
+    {
+        $dados = $request->validate(['lado' => 'sometimes|in:frente,verso']);
+        $documento = MotoristaDocumento::findOrFail($motoristaDocumentoId);
+        $anexo = ($dados['lado'] ?? 'frente') === 'verso' ? $documento->verso : $documento->toArray();
+        $path = $anexo['path'] ?? null;
+        $diretorio = ArmazenarAnexoMotoristaService::DIRETORIO.'/';
+        abort_unless(is_string($path) && str_starts_with($path, $diretorio), 404, 'Arquivo não encontrado.');
+        $arquivo = substr($path, strlen($diretorio));
+        abort_if($arquivo === '' || basename($arquivo) !== $arquivo, 404, 'Arquivo não encontrado.');
+        $disk = Storage::disk(ArmazenarAnexoMotoristaService::DIRETORIO);
+        abort_unless($disk->exists($arquivo), 404, 'Arquivo não encontrado.');
+
+        return $disk->download($arquivo, $anexo['name'] ?? basename($arquivo), [
+            'Content-Type' => $anexo['mime_type'] ?? 'application/octet-stream',
+        ]);
     }
 
     /**
@@ -72,6 +93,7 @@ class MotoristaDocumentoController extends Controller
             'motorista_id' => 'required|integer|exists:motoristas,id',
             'tipo_documento' => ['required', Rule::enum(TipoDocumentoMotorista::class)],
             'arquivo' => 'required|file|mimes:jpg,jpeg,png,pdf|max:2048',
+            'arquivo_verso' => $this->armazenarAnexoMotoristaService->regrasVerso($request),
             'cnh' => 'sometimes|array:nome,cpf,data_nascimento,numero_registro,cnh_categoria,primeira_habilitacao,data_emissao,cnh_expiracao,ear,observacao|prohibited_unless:tipo_documento,'.TipoDocumentoMotorista::CNH->value,
             'cnh.nome' => 'nullable|string|max:255',
             'cnh.cpf' => ['nullable', 'string', 'regex:/^[0-9]{11}$/'],
@@ -85,8 +107,7 @@ class MotoristaDocumentoController extends Controller
             'cnh.observacao' => 'nullable|string|max:5000',
         ]);
 
-        $anexo = $this->armazenarAnexoMotoristaService->salvar($request->file('arquivo'), $request);
-        $path = $anexo['path'];
+        $anexo = $this->armazenarAnexoMotoristaService->salvarEnvio($request);
 
         try {
             $resultado = DB::transaction(function () use ($dados, $anexo): array {
@@ -112,7 +133,7 @@ class MotoristaDocumentoController extends Controller
                 ];
             });
         } catch (Throwable $exception) {
-            $this->armazenarAnexoMotoristaService->excluir($path);
+            $this->armazenarAnexoMotoristaService->excluirEnvio($anexo);
             throw $exception;
         }
 
@@ -153,7 +174,7 @@ class MotoristaDocumentoController extends Controller
             ], 404);
         }
 
-        $this->armazenarAnexoMotoristaService->excluir($motoristaDocumento->path);
+        $this->armazenarAnexoMotoristaService->excluirEnvio($motoristaDocumento->toArray());
 
         // Remove do banco (soft delete)
         $motoristaId = $motoristaDocumento->motorista_id;
@@ -181,11 +202,11 @@ class MotoristaDocumentoController extends Controller
         // ninguém aprova o próprio documento
         $motoristaDoUsuario = Motorista::where('user_id', $request->user()->id)->value('id');
 
-        if ($motoristaDoUsuario !== null && $motoristaDoUsuario === $motoristaDocumento->motorista_id) {
-            return response()->json([
-                'message' => 'Você não pode alterar o status dos seus próprios documentos.',
-            ], 403);
-        }
+        // if ($motoristaDoUsuario !== null && $motoristaDoUsuario === $motoristaDocumento->motorista_id) {
+        //     return response()->json([
+        //         'message' => 'Você não pode alterar o status dos seus próprios documentos.',
+        //     ], 403);
+        // }
 
         $motoristaDocumento->status = $dados['status'];
 

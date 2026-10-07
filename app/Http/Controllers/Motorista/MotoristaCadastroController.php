@@ -12,7 +12,9 @@ use App\Services\AtualizarSituacaoMotoristaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\App;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Throwable;
 
 class MotoristaCadastroController extends Controller
 {
@@ -47,7 +49,7 @@ class MotoristaCadastroController extends Controller
 
         $documentos = MotoristaDocumento::where('motorista_id', $motorista->id)
             ->orderByDesc('id')
-            ->get(['tipo_documento', 'status', 'url'])
+            ->get(['tipo_documento', 'status', 'url', 'verso'])
             ->unique('tipo_documento')
             ->values();
 
@@ -124,6 +126,7 @@ class MotoristaCadastroController extends Controller
         $dados = $request->validate([
             'tipo_documento' => ['required', Rule::enum(TipoDocumentoMotorista::class)],
             'arquivo' => 'required|file|mimes:jpg,jpeg,png,webp,heic,heif,gif,pdf|max:10240',
+            'arquivo_verso' => $this->armazenarAnexoMotoristaService->regrasVerso($request, 'jpg,jpeg,png,webp,heic,heif,gif', 10240),
         ]);
 
         $motorista = Motorista::firstOrCreate(
@@ -137,20 +140,27 @@ class MotoristaCadastroController extends Controller
             ], 409);
         }
 
-        $anexo = $this->armazenarAnexoMotoristaService->salvar($request->file('arquivo'), $request);
+        $anexo = $this->armazenarAnexoMotoristaService->salvarEnvio($request);
+        try {
+            [$documento, $situacao] = DB::transaction(function () use ($motorista, $dados, $anexo): array {
+                $documento = MotoristaDocumento::create([
+                    'motorista_id' => $motorista->id,
+                    'tipo_documento' => $dados['tipo_documento'],
+                    ...$anexo,
+                    'status' => 'em_analise',
+                ]);
+                $situacao = $this->atualizarSituacaoMotoristaService->executar($motorista);
 
-        $documento = MotoristaDocumento::create([
-            'motorista_id' => $motorista->id,
-            'tipo_documento' => $dados['tipo_documento'],
-            ...$anexo,
-            'status' => 'em_analise',
-        ]);
-
-        $situacao = $this->atualizarSituacaoMotoristaService->executar($motorista);
+                return [$documento, $situacao];
+            });
+        } catch (Throwable $exception) {
+            $this->armazenarAnexoMotoristaService->excluirEnvio($anexo);
+            throw $exception;
+        }
 
         return response()->json([
             'message' => 'Documento enviado para análise.',
-            'documento' => $documento->only(['tipo_documento', 'status', 'path', 'url']),
+            'documento' => $documento->only(['tipo_documento', 'status', 'path', 'url', 'verso']),
             'situacao' => $situacao,
         ], 201);
     }
@@ -175,7 +185,7 @@ class MotoristaCadastroController extends Controller
             return response()->json(['message' => 'Documento não encontrado.'], 404);
         }
 
-        $this->armazenarAnexoMotoristaService->excluir($registro->path);
+        $this->armazenarAnexoMotoristaService->excluirEnvio($registro->toArray());
 
         $registro->delete();
 
