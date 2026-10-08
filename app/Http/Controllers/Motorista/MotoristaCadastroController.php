@@ -11,6 +11,7 @@ use App\Services\ArmazenarAnexoMotoristaService;
 use App\Services\AtualizarSituacaoMotoristaService;
 use App\Services\CrlvVeiculoService;
 use App\Services\DocumentosMotoristaService;
+use App\Services\InformacoesDocumentoMotoristaService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\App;
@@ -121,10 +122,12 @@ class MotoristaCadastroController extends Controller
      */
     public function enviarDocumento(Request $request): JsonResponse
     {
+        $informacoesService = app(InformacoesDocumentoMotoristaService::class);
+        $informacoesService->normalizar($request);
         $crlvService = app(CrlvVeiculoService::class);
         $crlvService->normalizar($request);
         $dados = $request->validate([
-            ...$crlvService->regras($request),
+            ...$informacoesService->regras($request),
             'tipo_documento' => ['required', Rule::enum(TipoDocumentoMotorista::class)],
             'arquivo' => 'required|file|mimes:jpg,jpeg,png,webp,heic,heif,gif,pdf|max:10240',
             'arquivo_verso' => $this->armazenarAnexoMotoristaService->regrasVerso($request, 'jpg,jpeg,png,webp,heic,heif,gif', 10240),
@@ -143,24 +146,26 @@ class MotoristaCadastroController extends Controller
 
         if ($dados['tipo_documento'] === 'crlv' && isset($dados['veiculo_id'])) {
             $veiculo = $crlvService->veiculoVinculado($motorista->id, (int) $dados['veiculo_id']);
-            $crlvService->validar($veiculo, $dados['crlv']);
+            $crlvService->validar($veiculo, $dados['informacoes_complementares']);
         }
         $anexo = $this->armazenarAnexoMotoristaService->salvarEnvio($request);
         try {
             [$documento, $situacao] = DB::transaction(function () use ($motorista, $dados, $anexo): array {
                 $motorista = Motorista::lockForUpdate()->findOrFail($motorista->id);
+                if ($dados['tipo_documento'] === 'cnh' && isset($dados['informacoes_complementares'])) {
+                    $motorista->update($dados['informacoes_complementares']);
+                }
                 $veiculo = $dados['tipo_documento'] === 'crlv'
-                    ? app(CrlvVeiculoService::class)->registrarOuAtualizar($motorista, $dados['crlv'], $dados['veiculo_id'] ?? null)
+                    ? app(CrlvVeiculoService::class)->registrarOuAtualizar($motorista, $dados['informacoes_complementares'], $dados['veiculo_id'] ?? null)
                     : null;
 
-                $documento = MotoristaDocumento::create([
+                $documento = $this->armazenarAnexoMotoristaService->registrarEnvio([
                     'motorista_id' => $motorista->id,
                     'tipo_documento' => $dados['tipo_documento'],
                     'veiculo_id' => $veiculo?->id,
-                    'crlv' => $dados['crlv'] ?? null,
-                    ...$anexo,
+                    'informacoes_complementares' => $dados['informacoes_complementares'] ?? null,
                     'status' => 'em_analise',
-                ]);
+                ], $anexo);
                 if ($veiculo !== null) {
                     app(CrlvVeiculoService::class)->sincronizarStatus($veiculo);
                 }
@@ -200,13 +205,14 @@ class MotoristaCadastroController extends Controller
             return response()->json(['message' => 'Documento não encontrado.'], 404);
         }
 
+        $registro = $registro->principalDoEnvio();
         $this->armazenarAnexoMotoristaService->excluirEnvio($registro->toArray());
 
         $situacao = DB::transaction(function () use ($motorista, $registro): string {
             $motorista = Motorista::lockForUpdate()->findOrFail($motorista->id);
             $registro = MotoristaDocumento::lockForUpdate()->findOrFail($registro->id);
             $veiculo = $registro->tipo_documento === TipoDocumentoMotorista::CRLV ? $registro->veiculo : null;
-            $registro->delete();
+            $registro->anexosDoEnvio()->delete();
             if ($veiculo !== null) {
                 app(CrlvVeiculoService::class)->sincronizarStatus($veiculo);
             }

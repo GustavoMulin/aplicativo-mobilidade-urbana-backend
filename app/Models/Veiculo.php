@@ -39,7 +39,7 @@ class Veiculo extends Model
     public function ultimoCrlv(): HasOne
     {
         return $this->hasOne(MotoristaDocumento::class)->ofMany(['id' => 'max'], function (Builder $query) {
-            $query->where('tipo_documento', 'crlv');
+            $query->where('tipo_documento', 'crlv')->where('ordem', 0);
         });
     }
 

@@ -17,31 +17,31 @@ class CrlvVeiculoService
 
         return [
             'veiculo_id' => 'nullable|prohibited_unless:tipo_documento,crlv|integer|exists:veiculos,id',
-            'crlv' => 'required_if:tipo_documento,crlv|prohibited_unless:tipo_documento,crlv|array:placa,renavam,numero_crv,codigo_seguranca,chassi,exercicio,data_emissao,nome_proprietario,cpf_cnpj_proprietario,marca_modelo,cor,ano_fabricacao,ano_modelo,categoria,categoria_veiculo,uf,observacao',
-            'crlv.placa' => ['required_if:tipo_documento,crlv', 'string', 'regex:/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/'],
-            'crlv.renavam' => 'required_if:tipo_documento,crlv|digits:11',
-            'crlv.numero_crv' => ['nullable', 'string', 'max:20', 'regex:/^[0-9]+$/'],
-            'crlv.codigo_seguranca' => ['nullable', 'string', 'max:20', 'regex:/^[0-9]+$/'],
-            'crlv.chassi' => ['required_if:tipo_documento,crlv', 'string', 'regex:/^[A-HJ-NPR-Z0-9]{17}$/'],
-            'crlv.exercicio' => 'required_if:tipo_documento,crlv|integer|between:1900,'.(now()->year + 1),
-            'crlv.data_emissao' => 'nullable|date_format:Y-m-d',
-            'crlv.nome_proprietario' => 'nullable|string|max:255',
-            'crlv.cpf_cnpj_proprietario' => ['nullable', 'string', 'regex:/^(?:[0-9]{11}|[0-9]{14})$/'],
-            'crlv.marca_modelo' => [Rule::requiredIf($cadastro), 'nullable', 'string', 'max:255', ...($cadastro ? ['regex:/^[^\/]+\s*\/\s*.+$/'] : [])],
-            'crlv.categoria_veiculo' => [Rule::requiredIf($cadastro), 'nullable', 'in:carro,moto,bicicleta'],
-            'crlv.cor' => [Rule::requiredIf($cadastro), 'nullable', 'string', 'max:40'],
-            'crlv.ano_fabricacao' => [Rule::requiredIf($cadastro), 'nullable', 'integer', 'between:1900,'.(now()->year + 1)],
-            'crlv.ano_modelo' => [Rule::requiredIf($cadastro), 'nullable', 'integer', 'between:1900,'.(now()->year + 1)],
-            'crlv.categoria' => 'nullable|string|max:60', 'crlv.uf' => [Rule::requiredIf($cadastro), 'nullable', 'string', 'size:2'], 'crlv.observacao' => 'nullable|string|max:5000',
+            'informacoes_complementares' => 'required_if:tipo_documento,crlv|prohibited_unless:tipo_documento,crlv|array:placa,renavam,numero_crv,codigo_seguranca,chassi,exercicio,data_emissao,nome_proprietario,cpf_cnpj_proprietario,marca_modelo,cor,ano_fabricacao,ano_modelo,categoria,categoria_veiculo,uf,observacao',
+            'informacoes_complementares.placa' => ['required_if:tipo_documento,crlv', 'string', 'regex:/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/'],
+            'informacoes_complementares.renavam' => 'required_if:tipo_documento,crlv|digits:11',
+            'informacoes_complementares.numero_crv' => ['nullable', 'string', 'max:20', 'regex:/^[0-9]+$/'],
+            'informacoes_complementares.codigo_seguranca' => ['nullable', 'string', 'max:20', 'regex:/^[0-9]+$/'],
+            'informacoes_complementares.chassi' => ['required_if:tipo_documento,crlv', 'string', 'regex:/^[A-HJ-NPR-Z0-9]{17}$/'],
+            'informacoes_complementares.exercicio' => 'required_if:tipo_documento,crlv|integer|between:1900,'.(now()->year + 1),
+            'informacoes_complementares.data_emissao' => 'nullable|date_format:Y-m-d',
+            'informacoes_complementares.nome_proprietario' => 'nullable|string|max:255',
+            'informacoes_complementares.cpf_cnpj_proprietario' => ['nullable', 'string', 'regex:/^(?:[0-9]{11}|[0-9]{14})$/'],
+            'informacoes_complementares.marca_modelo' => [Rule::requiredIf($cadastro), 'nullable', 'string', 'max:255', ...($cadastro ? ['regex:/^[^\/]+\s*\/\s*.+$/'] : [])],
+            'informacoes_complementares.categoria_veiculo' => [Rule::requiredIf($cadastro), 'nullable', 'in:carro,moto,bicicleta'],
+            'informacoes_complementares.cor' => [Rule::requiredIf($cadastro), 'nullable', 'string', 'max:40'],
+            'informacoes_complementares.ano_fabricacao' => [Rule::requiredIf($cadastro), 'nullable', 'integer', 'between:1900,'.(now()->year + 1)],
+            'informacoes_complementares.ano_modelo' => [Rule::requiredIf($cadastro), 'nullable', 'integer', 'between:1900,'.(now()->year + 1)],
+            'informacoes_complementares.categoria' => 'nullable|string|max:60', 'informacoes_complementares.uf' => [Rule::requiredIf($cadastro), 'nullable', 'string', 'size:2'], 'informacoes_complementares.observacao' => 'nullable|string|max:5000',
         ];
     }
 
     public function normalizar(Request $request): void
     {
-        if ($request->input('tipo_documento') !== 'crlv' || ! is_array($request->input('crlv'))) {
+        if ($request->input('tipo_documento') !== 'crlv' || ! is_array($request->input('informacoes_complementares'))) {
             return;
         }
-        $dados = $request->input('crlv');
+        $dados = $request->input('informacoes_complementares');
         foreach (['placa', 'chassi', 'uf'] as $campo) {
             if (isset($dados[$campo]) && is_scalar($dados[$campo])) {
                 $dados[$campo] = strtoupper(preg_replace('/[^a-zA-Z0-9]/', '', (string) $dados[$campo]));
@@ -60,7 +60,7 @@ class CrlvVeiculoService
         if (isset($dados['categoria_veiculo']) && is_string($dados['categoria_veiculo'])) {
             $dados['categoria_veiculo'] = strtolower(trim($dados['categoria_veiculo']));
         }
-        $request->merge(['crlv' => $dados]);
+        $request->merge(['informacoes_complementares' => $dados]);
     }
 
     public function veiculoVinculado(int $motoristaId, int $veiculoId): Veiculo
@@ -150,7 +150,7 @@ class CrlvVeiculoService
         $erros = [];
         foreach ($this->conferencia($veiculo, $dados) as $campo => $situacao) {
             if (in_array($situacao, ['divergente', 'nao_informado'], true)) {
-                $erros['crlv.'.$campo] = 'O '.strtoupper($campo).' do documento não corresponde ao veículo selecionado.';
+                $erros['informacoes_complementares.'.$campo] = 'O '.strtoupper($campo).' do documento não corresponde ao veículo selecionado.';
             }
         }
         if ($erros) {
