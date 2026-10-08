@@ -19,7 +19,7 @@ class VeiculosController extends Controller
      */
     public function index(): LengthAwarePaginator
     {
-        return Veiculo::orderBy('id', 'desc')->paginate();
+        return Veiculo::visiveis()->orderBy('id', 'desc')->paginate();
     }
 
     /**
@@ -39,6 +39,7 @@ class VeiculosController extends Controller
                 Rule::unique('veiculos')->where('renavam', $request->input('renavam')),
             ],
             'renavam' => 'required|string|max:11',
+            'chassi' => ['nullable', 'string', 'regex:/^[A-HJ-NPR-Z0-9]{17}$/'],
             'categoria' => 'required|string',
             'status' => 'required|string',
             'uf' => 'required|string|size:2',
@@ -83,6 +84,7 @@ class VeiculosController extends Controller
                     ->ignore($veiculo->id),
             ],
             'renavam' => 'sometimes|required|string|max:11',
+            'chassi' => ['nullable', 'string', 'regex:/^[A-HJ-NPR-Z0-9]{17}$/'],
             'categoria' => 'sometimes|required|string',
             'status' => 'sometimes|required|string',
             'uf' => 'sometimes|required|string|size:2',
@@ -110,6 +112,6 @@ class VeiculosController extends Controller
      */
     public function veiculoPorPlaca(string $placa): Collection
     {
-        return Veiculo::where('placa', 'like', "%{$placa}%")->get();
+        return Veiculo::liberados()->where('placa', 'like', "%{$placa}%")->get();
     }
 }

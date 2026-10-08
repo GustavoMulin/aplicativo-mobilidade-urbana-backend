@@ -29,3 +29,8 @@ Thumbs.db
 /public/images
 /docs/docs-*
 
+# Testes locais (não versionar novos arquivos)
+/tests/
+/.local-tests/
+/test-results/
+/playwright-report/

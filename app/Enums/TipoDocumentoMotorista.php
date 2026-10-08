@@ -43,6 +43,7 @@ enum TipoDocumentoMotorista: string
             'titulo' => $tipo->titulo(),
             'descricao' => $tipo->descricao(),
             'possui_dados_cnh' => $tipo === self::CNH,
+            'possui_dados_crlv' => $tipo === self::CRLV,
         ], self::cases());
     }
 }

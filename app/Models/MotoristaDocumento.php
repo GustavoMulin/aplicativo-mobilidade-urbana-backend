@@ -6,6 +6,7 @@ use App\Enums\MotivoReprovacaoDocumento;
 use App\Enums\TipoDocumentoMotorista;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class MotoristaDocumento extends Model
 {
@@ -13,6 +14,8 @@ class MotoristaDocumento extends Model
 
     protected $fillable = [
         'motorista_id',
+        'veiculo_id',
+        'crlv',
         'tipo_documento',
         'name',
         'type',
@@ -25,6 +28,11 @@ class MotoristaDocumento extends Model
         'motivo_reprovacao',
         'descricao_reprovacao',
     ];
+
+    public function veiculo(): BelongsTo
+    {
+        return $this->belongsTo(Veiculo::class);
+    }
 
     protected $appends = ['motivo_reprovacao_texto'];
 
@@ -44,6 +52,6 @@ class MotoristaDocumento extends Model
     /** @return array<string, string> */
     protected function casts(): array
     {
-        return ['tipo_documento' => TipoDocumentoMotorista::class, 'verso' => 'array', 'motivo_reprovacao' => MotivoReprovacaoDocumento::class];
+        return ['tipo_documento' => TipoDocumentoMotorista::class, 'verso' => 'array', 'crlv' => 'array', 'veiculo_id' => 'integer', 'motivo_reprovacao' => MotivoReprovacaoDocumento::class];
     }
 }

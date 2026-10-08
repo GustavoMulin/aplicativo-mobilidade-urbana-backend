@@ -9,6 +9,7 @@ use App\Models\Motorista;
 use App\Models\MotoristaVeiculo;
 use App\Models\StatusBusca;
 use App\Models\Veiculo;
+use App\Services\AtualizarSituacaoMotoristaService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -30,6 +31,7 @@ class MotoristaController extends Controller
 
         $veiculos = MotoristaVeiculo::query()
             ->where('motorista_id', $motorista->id)
+            ->whereHas('veiculo', fn ($query) => $query->liberados())
             ->with('veiculo')
             ->orderByDesc('id')
             ->get()
@@ -129,6 +131,7 @@ class MotoristaController extends Controller
             'cor' => 'required|string|max:40',
             'placa' => ['required', 'string', 'regex:/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/', Rule::unique('veiculos', 'placa')],
             'renavam' => ['required', 'digits:11', Rule::unique('veiculos', 'renavam')],
+            'chassi' => ['nullable', 'string', 'regex:/^[A-HJ-NPR-Z0-9]{17}$/'],
             'categoria' => 'required|string|in:carro,moto,bicicleta',
             'uf' => 'required|string|size:2',
         ], [
@@ -157,6 +160,8 @@ class MotoristaController extends Controller
 
             StatusBusca::where('motorista_id', $motorista->id)
                 ->update(['veiculo_id' => $veiculo->id]);
+
+            app(AtualizarSituacaoMotoristaService::class)->executar($motorista);
 
             return $veiculo;
         });
@@ -250,7 +255,8 @@ class MotoristaController extends Controller
             'veiculo_id' => 'required|integer|exists:veiculos,id',
         ]);
 
-        $motoristaVeiculo = MotoristaVeiculo::create($dados);
+        $motoristaVeiculo = MotoristaVeiculo::firstOrCreate($dados);
+        app(AtualizarSituacaoMotoristaService::class)->executar(Motorista::findOrFail($dados['motorista_id']));
 
         return response()->json([
             'success' => true,
@@ -265,6 +271,7 @@ class MotoristaController extends Controller
     public function motoristaVeiculos(int $motoristaid): LengthAwarePaginator
     {
         return MotoristaVeiculo::with(['motorista', 'veiculo'])
-            ->where('motorista_id', $motoristaid)->paginate();
+            ->where('motorista_id', $motoristaid)
+            ->whereHas('veiculo', fn ($query) => $query->visiveis())->paginate();
     }
 }
