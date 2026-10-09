@@ -17,10 +17,8 @@ return new class extends Migration
             $table->date('cnh_expiracao')->nullable()->change();
             $table->boolean('ear')->nullable()->change();
 
-            // aprovação do motorista, separada de users.status: o mesmo
-            // usuário continua passageiro ativo enquanto o cadastro de
-            // motorista está em análise
-            $table->string('status')->default('pendente')->after('user_id');
+            // A coluna já existe na migration inicial; apenas ajusta o padrão.
+            $table->string('status')->default('pendente')->after('user_id')->change();
         });
 
         DB::table('motoristas')->update(['status' => 'aprovado']);
@@ -29,7 +27,8 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('motoristas', function (Blueprint $table) {
-            $table->dropColumn('status');
+            // Mantém a coluna criada pela migration inicial, sem o padrão.
+            $table->string('status')->after('ear')->change();
         });
     }
 };

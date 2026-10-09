@@ -57,16 +57,14 @@ class DatabaseSeeder extends Seeder
         // ]);
         ProdutosCorrida::factory()->count(9)->create();
 
-        $this->call(PrecificacaoSeeder::class);
-        $userMotorista = User::factory()->create([
+        $this->call([
+            PrecificacaoSeeder::class,
+            GestoresSeeder::class,
+        ]);
+        $userMotorista = User::create([
             'name' => 'Diogo Guimarães',
             'data_nascimento' => '2022-04-11',
-            'telefone' => '69981400661',
-            'email' => 'test@example.com',
             'cpf' => '01149897295',
-            'foto' => '',
-            'foto_thumbnail' => '',
-            'status' => 'ativo',
         ]);
 
         Cidade::factory()->create([

@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Gestor;
 use App\Models\User;
 
 return [
@@ -46,6 +47,10 @@ return [
             'driver' => 'jwt',
             'provider' => 'users',
         ],
+        'gestores' => [
+            'driver' => 'jwt',
+            'provider' => 'gestores',
+        ],
     ],
 
     /*
@@ -66,6 +71,10 @@ return [
     */
 
     'providers' => [
+        'gestores' => [
+            'driver' => 'eloquent',
+            'model' => Gestor::class,
+        ],
         'users' => [
             'driver' => 'eloquent',
             'model' => env('AUTH_MODEL', User::class),
