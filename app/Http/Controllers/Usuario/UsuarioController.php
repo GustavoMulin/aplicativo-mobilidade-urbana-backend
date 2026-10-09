@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Motorista;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\App;
@@ -24,9 +25,25 @@ class UsuarioController extends Controller
      *
      * @return LengthAwarePaginator<int, User>
      */
-    public function index(): LengthAwarePaginator
+    public function index(Request $request): LengthAwarePaginator
     {
-        return User::orderBy('id', 'desc')->paginate();
+        $dados = $request->validate([
+            'search' => 'nullable|string|max:255',
+            'rowsPerPage' => 'sometimes|integer|between:0,50',
+        ]);
+
+        $query = User::query();
+        $busca = trim($dados['search'] ?? '');
+        if ($busca !== '') {
+            $termo = '%'.$busca.'%';
+            $cpf = preg_match('/^[\d\s.-]+$/', $busca) ? preg_replace('/\D/', '', $busca) : '';
+            $termoCpf = '%'.($cpf !== '' ? $cpf : $busca).'%';
+            $query->where(function (Builder $consulta) use ($termo, $termoCpf): void {
+                $consulta->where('name', 'like', $termo)->orWhere('cpf', 'like', $termoCpf);
+            });
+        }
+
+        return $query->orderBy('id', 'desc')->paginate(($dados['rowsPerPage'] ?? 15) ?: 15);
     }
 
     public function usuarioLogado(): ?User

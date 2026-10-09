@@ -37,7 +37,7 @@ class DocumentosMotoristaService
 
                 continue;
             }
-            foreach ($veiculos as $veiculo) {
+            foreach ($veiculos->take(1) as $veiculo) {
                 $doc = $ultimos->first(fn ($d) => $d->tipo_documento === TipoDocumentoMotorista::CRLV && $d->veiculo_id === $veiculo->id);
                 $rows[] = [...$base, ...($doc?->toArray() ?? []), 'chave' => 'crlv:'.$veiculo->id, 'veiculo_id' => $veiculo->id, 'veiculo' => $veiculo->toArray()];
             }

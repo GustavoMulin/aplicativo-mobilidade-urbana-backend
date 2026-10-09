@@ -72,39 +72,58 @@ class CrlvVeiculoService
         return Veiculo::lockForUpdate()->findOrFail($veiculoId);
     }
 
-    public function registrarOuAtualizar(Motorista $motorista, array $dados, ?int $veiculoId): Veiculo
+    public function registrarOuAtualizar(Motorista $motorista, array $dados, ?int $veiculoId, string $origem = 'documentos'): Veiculo
     {
-        if ($veiculoId !== null) {
-            $veiculo = $this->veiculoVinculado($motorista->id, $veiculoId);
-        } else {
-            $identificadores = ['placa' => $dados['placa'], 'renavam' => $dados['renavam']];
-            $veiculo = Veiculo::where($identificadores)->lockForUpdate()->first();
-            if ($veiculo === null) {
-                $conflito = Veiculo::where('placa', $dados['placa'])->orWhere('renavam', $dados['renavam'])->lockForUpdate()->first();
-                if ($conflito !== null) {
-                    $this->validar($conflito, $dados);
-                    $veiculo = $conflito;
-                }
-                if ($veiculo === null) {
-                    [$marca, $modelo] = array_map('trim', explode('/', $dados['marca_modelo'], 2));
-                    $veiculo = Veiculo::firstOrCreate($identificadores, [
-                        'marca' => $marca,
-                        'modelo' => $modelo,
-                        'ano_fabricacao' => $dados['ano_fabricacao'],
-                        'ano_modelo' => $dados['ano_modelo'],
-                        'cor' => $dados['cor'],
-                        'categoria' => $dados['categoria_veiculo'],
-                        'uf' => $dados['uf'],
-                        'status' => 'em_analise',
-                    ]);
-                }
-            }
+        $possuiVeiculo = MotoristaVeiculo::where('motorista_id', $motorista->id)->exists();
+        if ($origem === 'veiculos' && ! $possuiVeiculo) {
+            throw ValidationException::withMessages(['origem' => 'Cadastre o primeiro veículo na área de Documentos.']);
         }
+
+        $veiculo = $veiculoId !== null
+            ? $this->veiculoVinculado($motorista->id, $veiculoId)
+            : Veiculo::where(function ($query) use ($dados) {
+                $query->where('placa', $dados['placa'])->orWhere('renavam', $dados['renavam'])->orWhere('chassi', $dados['chassi']);
+            })->lockForUpdate()->first();
+
+        if ($veiculo !== null) {
+            $this->validar($veiculo, $dados);
+        }
+        $vinculado = $veiculo !== null && MotoristaVeiculo::where('motorista_id', $motorista->id)->where('veiculo_id', $veiculo->id)->exists();
+        if ($origem === 'documentos' && $possuiVeiculo && ! $vinculado) {
+            throw ValidationException::withMessages(['origem' => 'Cadastre veículos adicionais em Motoristas > Veículos > Adicionar veículo.']);
+        }
+
+        if ($veiculo === null) {
+            [$marca, $modelo] = array_map('trim', explode('/', $dados['marca_modelo'], 2));
+            $veiculo = Veiculo::firstOrCreate(['placa' => $dados['placa'], 'renavam' => $dados['renavam']], [
+                'marca' => $marca, 'modelo' => $modelo,
+                'ano_fabricacao' => $dados['ano_fabricacao'], 'ano_modelo' => $dados['ano_modelo'],
+                'cor' => $dados['cor'], 'categoria' => $dados['categoria_veiculo'], 'uf' => $dados['uf'],
+                'status' => 'em_analise',
+            ]);
+        }
+        $veiculo = Veiculo::lockForUpdate()->findOrFail($veiculo->id);
         $this->validar($veiculo, $dados);
+        $this->validarSubstituicao($veiculo, $dados);
         $this->salvarDados($veiculo, $dados);
         MotoristaVeiculo::firstOrCreate(['motorista_id' => $motorista->id, 'veiculo_id' => $veiculo->id]);
 
         return $veiculo;
+    }
+
+    private function validarSubstituicao(Veiculo $veiculo, array $dados): void
+    {
+        $documento = $veiculo->ultimoCrlv()->first();
+        if ($documento === null || $documento->status === 'reprovado') {
+            return;
+        }
+        $exercicio = (int) ($documento->informacoes_complementares['exercicio'] ?? $veiculo->exercicio);
+        if ($exercicio < 1900 || $exercicio >= now()->year) {
+            throw ValidationException::withMessages(['arquivo' => 'Este veículo já possui CRLV cadastrado. A substituição só é permitida quando o exercício do documento atual for anterior ao ano atual.']);
+        }
+        if ((int) $dados['exercicio'] < now()->year) {
+            throw ValidationException::withMessages(['informacoes_complementares.exercicio' => 'Para renovar, envie um CRLV com exercício do ano atual ou posterior.']);
+        }
     }
 
     public function sincronizarStatus(Veiculo $veiculo): void

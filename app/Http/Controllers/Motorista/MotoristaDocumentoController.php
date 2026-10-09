@@ -88,6 +88,7 @@ class MotoristaDocumentoController extends Controller
         $dados = $request->validate([
             ...$informacoesService->regras($request),
             'motorista_id' => 'required|integer|exists:motoristas,id',
+            'origem' => 'sometimes|required|in:documentos,veiculos|prohibited_unless:tipo_documento,crlv',
             'tipo_documento' => ['required', Rule::enum(TipoDocumentoMotorista::class)],
             'arquivo' => 'required|file|mimes:jpg,jpeg,png,pdf|max:2048',
             'arquivo_verso' => $this->armazenarAnexoMotoristaService->regrasVerso($request),
@@ -109,7 +110,7 @@ class MotoristaDocumentoController extends Controller
                 }
 
                 $veiculo = $dados['tipo_documento'] === 'crlv'
-                    ? app(CrlvVeiculoService::class)->registrarOuAtualizar($motorista, $dados['informacoes_complementares'], $dados['veiculo_id'] ?? null)
+                    ? app(CrlvVeiculoService::class)->registrarOuAtualizar($motorista, $dados['informacoes_complementares'], $dados['veiculo_id'] ?? null, $dados['origem'] ?? 'documentos')
                     : null;
 
                 $motoristaDocumento = $this->armazenarAnexoMotoristaService->registrarEnvio([
