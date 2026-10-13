@@ -81,6 +81,23 @@ class NegociacaoCorridaController extends Controller
         return response()->json($escolhida);
     }
 
+    public function recusar(Request $request, int $corrida, int $proposta): JsonResponse
+    {
+        $passageiroId = Passageiro::where('user_id', $request->user()->id)->value('id');
+
+        if ($passageiroId === null) {
+            return response()->json(['message' => 'Corrida não encontrada.'], 404);
+        }
+
+        try {
+            $this->negociacao->recusar((int) $passageiroId, $corrida, $proposta);
+        } catch (RuntimeException $excecao) {
+            return $this->erro($excecao);
+        }
+
+        return response()->json(['message' => 'Proposta recusada.']);
+    }
+
     private function corridaDoPassageiro(Request $request, int $corridaId): ?Corrida
     {
         $passageiroId = Passageiro::where('user_id', $request->user()->id)->value('id');

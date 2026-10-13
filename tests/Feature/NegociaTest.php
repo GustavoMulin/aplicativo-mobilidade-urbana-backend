@@ -188,7 +188,30 @@ it('no Pix o pedido do Negocia não gera cobrança antes da escolha', function (
         ->and(CobrancaPix::where('corrida_id', $corrida->id)->exists())->toBeFalse();
 });
 
-it('motorista não aceita direto: manda proposta pela oferta ou por outro valor', function () {
+it('motorista que aceita o valor entra na lista para o passageiro escolher', function () {
+    $corrida = negPedir(negPassageiro(), 9.0);
+    $motorista = negMotorista();
+
+    negPropor($motorista, $corrida)
+        ->assertCreated()
+        ->assertJsonPath('valor_motorista', 8.46)
+        ->assertJsonPath('valor_passageiro', 9)
+        ->assertJsonPath('status', 'pendente');
+
+    $corrida->refresh();
+    expect($corrida->motorista_id)->toBeNull()
+        ->and($corrida->status_corrida)->toBe('solicitada')
+        ->and($corrida->status_negociacao)->toBe('em_negociacao')
+        ->and(CorridaNegociacoes::where('corrida_id', $corrida->id)->value('status'))->toBe('pendente')
+        ->and(StatusBusca::where('motorista_id', $motorista->id)->value('disponivel'))->toBeTruthy();
+
+    $this->actingAs($corrida->passageiro->user, 'jwt')
+        ->getJson("/api/corridas/{$corrida->id}/propostas")
+        ->assertOk()
+        ->assertJsonPath('propostas.0.aceitou_oferta', true);
+});
+
+it('contraproposta do motorista aguarda a escolha do passageiro', function () {
     $corrida = negPedir(negPassageiro(), 9.0);
     $motorista = negMotorista();
 
@@ -199,12 +222,9 @@ it('motorista não aceita direto: manda proposta pela oferta ou por outro valor'
     expect($oferta['negociavel'])->toBeTrue()
         ->and($oferta['minha_proposta'])->toBeNull();
 
-    negPropor($motorista, $corrida)->assertCreated()
-        ->assertJsonPath('valor_motorista', 8.46)
-        ->assertJsonPath('valor_passageiro', 9);
-
     negPropor($motorista, $corrida, 10.0)->assertCreated()
-        ->assertJsonPath('valor_passageiro', 10.64);
+        ->assertJsonPath('valor_passageiro', 10.64)
+        ->assertJsonPath('status', 'pendente');
     expect(CorridaNegociacoes::where('corrida_id', $corrida->id)->count())->toBe(1);
 
     $oferta = app(DespachoCorridaService::class)->ofertasPara($motorista)->first();
@@ -218,7 +238,7 @@ it('motorista não aceita direto: manda proposta pela oferta ou por outro valor'
         ->assertJsonPath('message', 'Seu veículo não atende a categoria pedida nesta corrida.');
 });
 
-it('o passageiro vê as propostas valendo, da mais barata para a mais cara', function () {
+it('o passageiro vê as propostas valendo, da mais recente para a mais antiga', function () {
     $passageiro = negPassageiro();
     $corrida = negPedir($passageiro, 9.0);
     $carlos = negMotorista('Carlos Souza');
@@ -226,8 +246,8 @@ it('o passageiro vê as propostas valendo, da mais barata para a mais cara', fun
     $velho = negMotorista('Bruno Reis');
 
     negPropor($carlos, $corrida, 10.0)->assertCreated();
-    negPropor($ana, $corrida)->assertCreated();
-    negPropor($velho, $corrida)->assertCreated();
+    negPropor($ana, $corrida, 8.46)->assertCreated();
+    negPropor($velho, $corrida, 8.60)->assertCreated();
     CorridaNegociacoes::where('motorista_id', $velho->id)->update(['expira_em' => now()->subSecond()]);
 
     $propostas = $this->actingAs($passageiro->user, 'jwt')
@@ -254,7 +274,7 @@ it('no dinheiro, escolher a proposta já entrega a corrida ao motorista', functi
     $carlos = negMotorista('Carlos Souza');
     $ana = negMotorista('Ana Lima');
     $propostaCarlos = negPropor($carlos, $corrida, 10.0)->json('id');
-    negPropor($ana, $corrida)->assertCreated();
+    negPropor($ana, $corrida, 8.46)->assertCreated();
 
     $this->actingAs($passageiro->user, 'jwt')
         ->postJson("/api/corridas/{$corrida->id}/propostas/{$propostaCarlos}/escolher")
@@ -269,6 +289,30 @@ it('no dinheiro, escolher a proposta já entrega a corrida ao motorista', functi
         ->and((float) $corrida->corrida_financeiro->valor_motorista)->toBe(10.0)
         ->and(CorridaNegociacoes::where('motorista_id', $ana->id)->value('status'))->toBe('recusada')
         ->and(StatusBusca::where('motorista_id', $carlos->id)->value('disponivel'))->toBeFalsy();
+});
+
+it('o passageiro recusa uma proposta sem encerrar as demais', function () {
+    $passageiro = negPassageiro();
+    $corrida = negPedir($passageiro, 9.0);
+    $carlos = negMotorista('Carlos Souza');
+    $ana = negMotorista('Ana Lima');
+    $propostaCarlos = negPropor($carlos, $corrida)->json('id');
+    $propostaAna = negPropor($ana, $corrida, 10.0)->json('id');
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->postJson("/api/corridas/{$corrida->id}/propostas/{$propostaCarlos}/recusar")
+        ->assertOk()
+        ->assertJsonPath('message', 'Proposta recusada.');
+
+    $propostas = $this->actingAs($passageiro->user, 'jwt')
+        ->getJson("/api/corridas/{$corrida->id}/propostas")
+        ->assertOk()
+        ->json('propostas');
+
+    expect($propostas)->toHaveCount(1)
+        ->and($propostas[0]['id'])->toBe($propostaAna)
+        ->and(CorridaNegociacoes::find($propostaCarlos)->status)->toBe('recusada')
+        ->and($corrida->refresh()->status_negociacao)->toBe('em_negociacao');
 });
 
 it('no Pix a cobrança sai na escolha e o motorista só vai depois do pagamento', function () {
@@ -351,7 +395,7 @@ it('proposta de motorista que ficou ocupado não pode ser escolhida', function (
     $passageiro = negPassageiro();
     $corrida = negPedir($passageiro, 9.0);
     $carlos = negMotorista();
-    $proposta = negPropor($carlos, $corrida)->json('id');
+    $proposta = negPropor($carlos, $corrida, 8.46)->json('id');
     StatusBusca::where('motorista_id', $carlos->id)->update(['disponivel' => false]);
 
     $this->actingAs($passageiro->user, 'jwt')
@@ -383,7 +427,7 @@ it('se o Pix não puder ser gerado, a escolha não vale e a negociação continu
     $passageiro = negPassageiro();
     $corrida = negPedir($passageiro, 9.0, 'pix');
     $carlos = negMotorista();
-    $proposta = negPropor($carlos, $corrida)->json('id');
+    $proposta = negPropor($carlos, $corrida, 8.46)->json('id');
 
     $this->actingAs($passageiro->user, 'jwt')
         ->postJson("/api/corridas/{$corrida->id}/propostas/{$proposta}/escolher")
@@ -397,4 +441,54 @@ it('se o Pix não puder ser gerado, a escolha não vale e a negociação continu
         ->and((float) $corrida->corrida_financeiro->valor_pago_passageiro)->toBe(9.0)
         ->and(CorridaNegociacoes::find($proposta)->status)->toBe('pendente')
         ->and(StatusBusca::where('motorista_id', $carlos->id)->value('disponivel'))->toBeTruthy();
+});
+
+it('o passageiro aumenta a oferta enquanto espera e o motorista passa a ver o valor novo', function () {
+    $passageiro = negPassageiro();
+    $corrida = negPedir($passageiro, 9.0);
+    $barato = negMotorista('Ana Lima');
+    $caro = negMotorista('Bruno Reis', latitude: -8.7605);
+    negPropor($barato, $corrida, 8.46)->assertCreated();
+    negPropor($caro, $corrida, 12.0)->assertCreated();
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->getJson('/api/minha-corrida-atual?perfil=passageiro')
+        ->assertOk()
+        ->assertJsonPath('corrida.oferta_maxima', 20);
+
+    $this->postJson("/api/corridas/{$corrida->id}/oferta", ['valor_oferecido' => 10.5])
+        ->assertOk()
+        ->assertJsonPath('valor_oferecido', 10.5)
+        ->assertJsonPath('oferta_maxima', 20);
+
+    $financeiro = $corrida->corrida_financeiro()->firstOrFail();
+    expect((float) $financeiro->valor_pago_passageiro)->toBe(10.5)
+        ->and((float) $financeiro->valor_motorista)->toBe(9.87);
+
+    // a proposta abaixo da nova oferta sai; a de 12,00 continua
+    expect(CorridaNegociacoes::where('corrida_id', $corrida->id)->where('status', 'pendente')->pluck('motorista_id')->all())
+        ->toBe([$caro->id]);
+
+    // o motorista que tinha pedido menos recebe a chamada de novo pelo valor maior
+    $oferta = app(DespachoCorridaService::class)->ofertasPara($barato)->firstWhere('corrida_id', $corrida->id);
+    expect($oferta['valor_motorista'])->toBe(9.87);
+});
+
+it('a nova oferta precisa ser maior que a atual e caber no teto', function () {
+    $passageiro = negPassageiro();
+    $corrida = negPedir($passageiro, 9.0);
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->postJson("/api/corridas/{$corrida->id}/oferta", ['valor_oferecido' => 9.0])
+        ->assertStatus(422)
+        ->assertJsonPath('message', 'A nova oferta precisa ser maior que a atual.');
+
+    $this->postJson("/api/corridas/{$corrida->id}/oferta", ['valor_oferecido' => 20.5])
+        ->assertStatus(422)
+        ->assertJsonPath('message', 'Ofereça até R$ 20,00.');
+
+    // outra pessoa não mexe na oferta
+    $this->actingAs(negPassageiro()->user, 'jwt')
+        ->postJson("/api/corridas/{$corrida->id}/oferta", ['valor_oferecido' => 10.0])
+        ->assertNotFound();
 });

@@ -147,8 +147,8 @@ class NegociacaoCorridaService
     }
 
     /**
-     * Propostas que o passageiro ainda pode escolher, da mais barata para a
-     * mais cara.
+     * Propostas que o passageiro ainda pode escolher, das mais recentes para
+     * as mais antigas.
      *
      * @return list<array<string, mixed>>
      */
@@ -162,8 +162,8 @@ class NegociacaoCorridaService
         $propostas = CorridaNegociacoes::with(['motorista.user:id,name,foto', 'veiculo'])
             ->where('corrida_id', $corrida->id)
             ->where('status', 'pendente')
-            ->orderBy('valor_passageiro')
-            ->orderBy('id')
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id')
             ->get();
 
         if ($propostas->isEmpty()) {
@@ -185,7 +185,7 @@ class NegociacaoCorridaService
             ->groupBy('motorista_id')
             ->pluck('total', 'motorista_id');
         $posicoes = StatusBusca::whereIn('motorista_id', $motoristaIds)->get()->keyBy('motorista_id');
-        $corrida->loadMissing('corrida_destinos');
+        $corrida->loadMissing(['corrida_destinos', 'corrida_financeiro']);
 
         return array_values($propostas->map(function (CorridaNegociacoes $proposta) use ($corrida, $notas, $totais, $posicoes) {
             $posicao = $posicoes->get($proposta->motorista_id);
@@ -195,6 +195,10 @@ class NegociacaoCorridaService
             return [
                 'id' => $proposta->id,
                 'valor_passageiro' => $proposta->valor_passageiro,
+                'aceitou_oferta' => abs(
+                    (float) $proposta->valor_motorista
+                    - (float) $corrida->corrida_financeiro?->valor_motorista
+                ) < 0.01,
                 'expira_em' => $proposta->expira_em?->toIso8601String(),
                 'motorista' => [
                     'nome' => $nome === '' ? 'Motorista' : explode(' ', $nome)[0],
@@ -213,6 +217,45 @@ class NegociacaoCorridaService
                 'chegada_min' => $distancia === null ? null : max(1, (int) ceil($distancia / self::KM_POR_MINUTO)),
             ];
         })->values()->all());
+    }
+
+    /**
+     * Remove uma proposta da lista do passageiro sem encerrar a negociação.
+     */
+    public function recusar(int $passageiroId, int $corridaId, int $propostaId): void
+    {
+        DB::transaction(function () use ($passageiroId, $corridaId, $propostaId) {
+            $corrida = Corrida::whereKey($corridaId)
+                ->where('passageiro_id', $passageiroId)
+                ->lockForUpdate()
+                ->first();
+
+            if ($corrida === null) {
+                throw new RuntimeException('Corrida não encontrada.', 404);
+            }
+
+            if ($corrida->status_corrida !== 'solicitada' || $corrida->status_negociacao !== 'em_negociacao') {
+                throw new RuntimeException('Esta corrida não está mais em negociação.', 409);
+            }
+
+            $proposta = CorridaNegociacoes::whereKey($propostaId)
+                ->where('corrida_id', $corrida->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($proposta === null) {
+                throw new RuntimeException('Proposta não encontrada.', 404);
+            }
+
+            if (! $proposta->valendo()) {
+                throw new RuntimeException('Esta proposta não está mais disponível.', 409);
+            }
+
+            $proposta->update(['status' => 'recusada']);
+        });
+
+        Avisar::semQuebrar(new CorridaAtualizada($corridaId, 'solicitada'));
+        Avisar::semQuebrar(new CorridasDisponiveisAlteradas);
     }
 
     /**

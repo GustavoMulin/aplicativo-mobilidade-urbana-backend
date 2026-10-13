@@ -12,6 +12,7 @@ use App\Models\Motorista;
 use App\Models\Passageiro;
 use App\Services\AjustarPontoEmbarqueService;
 use App\Services\AlterarCorridaService;
+use App\Services\AumentarOfertaNegociaService;
 use App\Services\CalcularPrecoCorridaService;
 use App\Services\ContabilizarEsperaCorridaService;
 use App\Services\DespachoCorridaService;
@@ -311,6 +312,11 @@ class CorridaController extends Controller
                     ->addSeconds(max(0, (int) config('precificacao.cancelamento_passageiro_carencia_segundos', 180)))
                     ->toIso8601String()
             );
+        }
+
+        // Negocia: até quanto o passageiro pode aumentar a oferta
+        if ($corrida->status_negociacao === 'em_negociacao' && $corrida->corrida_financeiro !== null) {
+            $corrida->setAttribute('oferta_maxima', AumentarOfertaNegociaService::ofertaMaxima($corrida->corrida_financeiro));
         }
 
         // Negocia no Pix/cartão: o motorista escolhido espera o pagamento até

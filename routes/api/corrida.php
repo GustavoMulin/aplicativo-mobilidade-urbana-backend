@@ -2,6 +2,7 @@
 
 // CODEX: 5 linhas alteradas neste arquivo; limita consultas repetidas da prévia de cancelamento.
 
+use App\Http\Controllers\Corrida\AumentarOfertaNegociaController;
 use App\Http\Controllers\Corrida\AvaliacoesCorridaController;
 use App\Http\Controllers\Corrida\CobrancaCartaoController;
 use App\Http\Controllers\Corrida\CobrancaPixController;
@@ -29,9 +30,15 @@ Route::post('motorista/corridas/{corrida}/recusar', [CorridaMotoristaController:
 Route::post('motorista/corridas/{corrida}/propostas', [NegociacaoCorridaController::class, 'propor'])
     ->middleware('throttle:30,1,negocia-propor');
 Route::get('corridas/{corrida}/propostas', [NegociacaoCorridaController::class, 'propostas']);
+Route::post('corridas/{corrida}/oferta', AumentarOfertaNegociaController::class)
+    ->whereNumber('corrida')
+    ->middleware('throttle:20,1,negocia-aumentar');
 Route::post('corridas/{corrida}/propostas/{proposta}/escolher', [NegociacaoCorridaController::class, 'escolher'])
     ->whereNumber('proposta')
     ->middleware('throttle:20,1,negocia-escolher');
+Route::post('corridas/{corrida}/propostas/{proposta}/recusar', [NegociacaoCorridaController::class, 'recusar'])
+    ->whereNumber('proposta')
+    ->middleware('throttle:30,1,negocia-recusar');
 Route::post('motorista/corridas/{corrida}/{acao}', [CorridaMotoristaController::class, 'transicionar'])
     ->whereIn('acao', ['cheguei', 'iniciar', 'finalizar']);
 Route::post('motorista/corridas/{corrida}/cancelar', [CorridaMotoristaController::class, 'cancelar']);
