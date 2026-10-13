@@ -41,8 +41,6 @@ function passageiroPre(): Passageiro
         'cpf' => substr(preg_replace('/\D/', '', $id).'00000000000', 0, 11),
         'data_nascimento' => '1990-01-01',
         'email' => "pre-$id@example.test",
-        'foto' => null,
-        'foto_thumbnail' => null,
         'status' => 'ativo',
         'password' => 'senha-de-teste',
     ]);

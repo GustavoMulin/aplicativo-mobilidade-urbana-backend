@@ -29,8 +29,6 @@ class CenarioCorridaDesenvolvimentoSeeder extends Seeder
                     'telefone' => self::TELEFONE_MOTORISTA,
                     'cpf' => '52998224725',
                     'data_nascimento' => '1990-01-01',
-                    'foto' => null,
-                    'foto_thumbnail' => null,
                     'status' => 'ativo',
                     'password' => 'desenvolvimento',
                 ]
@@ -39,6 +37,7 @@ class CenarioCorridaDesenvolvimentoSeeder extends Seeder
             $motorista = Motorista::updateOrCreate(
                 ['user_id' => $usuarioMotorista->id],
                 [
+                    'foto' => null,
                     'status' => 'aprovado',
                     'numero_registro' => '99999999999',
                     'cnh_categoria' => 'AB',
@@ -100,8 +99,6 @@ class CenarioCorridaDesenvolvimentoSeeder extends Seeder
                     'telefone' => self::TELEFONE_PASSAGEIRO,
                     'cpf' => '11144477735',
                     'data_nascimento' => '1990-01-01',
-                    'foto' => null,
-                    'foto_thumbnail' => null,
                     'status' => 'ativo',
                     'password' => 'desenvolvimento',
                 ]
@@ -109,7 +106,7 @@ class CenarioCorridaDesenvolvimentoSeeder extends Seeder
 
             Passageiro::updateOrCreate(
                 ['user_id' => $usuarioPassageiro->id],
-                ['media_avaliacao' => null]
+                ['foto' => null, 'media_avaliacao' => null]
             );
         });
 

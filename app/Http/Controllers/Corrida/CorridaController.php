@@ -10,8 +10,10 @@ use App\Models\Corrida;
 use App\Models\CotacaoCorrida;
 use App\Models\Motorista;
 use App\Models\Passageiro;
+use App\Models\User;
 use App\Services\AjustarPontoEmbarqueService;
 use App\Services\AlterarCorridaService;
+use App\Services\AumentarOfertaNegociaService;
 use App\Services\CalcularPrecoCorridaService;
 use App\Services\ContabilizarEsperaCorridaService;
 use App\Services\DespachoCorridaService;
@@ -139,10 +141,10 @@ class CorridaController extends Controller
         $pagina = $this->doUsuario($request)
             ->with([
                 'produto:id,nome',
-                'motorista:id,user_id',
-                'motorista.user:id,name,foto',
-                'passageiro:id,user_id',
-                'passageiro.user:id,name,foto',
+                'motorista:id,user_id,foto',
+                'motorista.user:id,name',
+                'passageiro:id,user_id,foto',
+                'passageiro.user:id,name',
                 'veiculo:id,modelo,cor,placa',
                 'corrida_destinos:id,corrida_id,tipo,ordem,endereco',
                 'corrida_financeiro:id,corrida_id,valor_pago_passageiro,tarifa_base,taxa_cancelamento,taxa_plataforma_valor,taxa_plataforma_percentual,valor_motorista,valor_liquido_motorista,metodo_pagamento',
@@ -280,8 +282,10 @@ class CorridaController extends Controller
         $corrida = $this->doUsuario($request, $dados['perfil'] ?? null)
             ->whereIn('status_corrida', self::STATUS_ATIVOS)
             ->with([
-                'motorista.user:id,name,foto,telefone',
-                'passageiro.user:id,name,foto',
+                'motorista:id,user_id,foto',
+                'motorista.user:id,name,telefone',
+                'passageiro:id,user_id,foto',
+                'passageiro.user:id,name',
                 'veiculo',
                 'corrida_destinos',
                 'corrida_financeiro',
@@ -301,7 +305,7 @@ class CorridaController extends Controller
             && $corrida->motorista_id === (int) $motoristaId
             && ! in_array($corrida->status_corrida, ['motorista_chegou', 'em_andamento'], true);
         if ($ocultarFotoPassageiro) {
-            $corrida->passageiro?->user?->setAttribute('foto', null);
+            $corrida->passageiro?->setAttribute('foto', null);
         }
 
         if ($corrida->status_corrida === 'aceita' && $corrida->tempo_aceite !== null) {
@@ -311,6 +315,11 @@ class CorridaController extends Controller
                     ->addSeconds(max(0, (int) config('precificacao.cancelamento_passageiro_carencia_segundos', 180)))
                     ->toIso8601String()
             );
+        }
+
+        // Negocia: até quanto o passageiro pode aumentar a oferta
+        if ($corrida->status_negociacao === 'em_negociacao' && $corrida->corrida_financeiro !== null) {
+            $corrida->setAttribute('oferta_maxima', AumentarOfertaNegociaService::ofertaMaxima($corrida->corrida_financeiro));
         }
 
         // Negocia no Pix/cartão: o motorista escolhido espera o pagamento até
@@ -380,7 +389,7 @@ class CorridaController extends Controller
 
         return [
             'nome' => $this->primeiroNome((string) $usuario->name),
-            'foto' => $usuario->foto,
+            'foto' => $motorista->foto,
             'telefone' => is_string($telefone) ? $telefone : null,
             'nota' => $nota === null ? null : round((float) $nota, 2),
             'corridas' => (clone $corridasDoMotorista)
@@ -423,7 +432,7 @@ class CorridaController extends Controller
         return [
             'nome' => $this->primeiroNome((string) ($convidado ? $corrida->convidado_nome : $usuario->name)),
             'solicitante' => $convidado ? $this->primeiroNome((string) $usuario->name) : null,
-            'foto' => $fotoLiberada ? $usuario->foto : null,
+            'foto' => $fotoLiberada ? $passageiro->foto : null,
             'foto_oculta' => ! $fotoLiberada,
             'telefone' => $convidado
                 ? $corrida->convidado_telefone
@@ -512,9 +521,12 @@ class CorridaController extends Controller
             return response()->json(['message' => 'Cotação expirada. Refaça a consulta de preços.'], 410);
         }
 
+        $usuario = $request->user();
+        abort_unless($usuario instanceof User, 401, 'Não autenticado.');
+
         try {
             $corrida = $this->solicitarCorridaService->executar(
-                usuario: $request->user(),
+                usuario: $usuario,
                 cotacao: $cotacao,
                 produtosCodigos: array_values(array_map('strval', $dados['produtos_codigos'] ?? [$dados['produto_codigo']])),
                 metodoPagamento: $dados['metodo_pagamento'] ?? null,
@@ -538,10 +550,10 @@ class CorridaController extends Controller
         $encontrada = $this->doUsuario($request)
             ->whereKey($corrida)
             ->with([
-                'motorista:id,user_id',
-                'motorista.user:id,name,foto',
-                'passageiro:id,user_id',
-                'passageiro.user:id,name,foto',
+                'motorista:id,user_id,foto',
+                'motorista.user:id,name',
+                'passageiro:id,user_id,foto',
+                'passageiro.user:id,name',
                 'veiculo',
                 'corrida_destinos',
                 'corrida_financeiro',

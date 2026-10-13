@@ -25,8 +25,6 @@ function passageiroCartao(): Passageiro
         'cpf' => '52998224725',
         'data_nascimento' => '1990-01-01',
         'email' => "cartao-$id@example.test",
-        'foto' => null,
-        'foto_thumbnail' => null,
         'status' => 'ativo',
         'password' => 'senha-de-teste',
     ]);
