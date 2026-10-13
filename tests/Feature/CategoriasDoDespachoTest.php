@@ -380,3 +380,30 @@ it('o seeder cria o Expresso logo depois do Normal, com raio de busca menor', fu
         ->and($expresso->prioritario)->toBeTrue()
         ->and((float) $raioExpresso)->toBeLessThan((float) $raioPop);
 });
+
+it('motorista sem veículo não fica online', function () {
+    $motorista = catMotorista(null);
+
+    $this->actingAs($motorista->user, 'jwt')
+        ->postJson('/api/motorista/disponibilidade', [
+            'disponivel' => true,
+            'latitude' => -8.76,
+            'longitude' => -63.90,
+        ])
+        ->assertUnprocessable()
+        ->assertJsonPath('motivo', 'sem_veiculo');
+
+    // desconectar sempre pode
+    $this->postJson('/api/motorista/disponibilidade', ['disponivel' => false])->assertOk();
+});
+
+it('quem também é passageiro não recebe nem aceita a própria corrida', function () {
+    $motorista = catMotorista('carro');
+    $euPassageiro = Passageiro::create(['user_id' => $motorista->user_id]);
+    $minha = catPedir($euPassageiro, ['pop' => 12.0]);
+    $deOutro = catPedir(catPassageiro(), ['pop' => 12.0]);
+
+    expect(catOfertadas($motorista))->toBe([$deOutro->id])
+        ->and(fn () => app(DespachoCorridaService::class)->aceitar($motorista, $minha->id))
+        ->toThrow(RuntimeException::class, 'própria corrida');
+});

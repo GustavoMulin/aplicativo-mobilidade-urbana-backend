@@ -43,6 +43,15 @@ class CorridaMotoristaController extends Controller
             return response()->json(['message' => 'Este veículo não está no seu cadastro.'], 422);
         }
 
+        // sem veículo o motorista ficava "Buscando" sem nunca receber corrida
+        // (toda corrida pede uma categoria de veículo)
+        if ($dados['disponivel'] && ! MotoristaVeiculo::where('motorista_id', $motorista->id)->exists()) {
+            return response()->json([
+                'message' => 'Cadastre um veículo para ficar online.',
+                'motivo' => 'sem_veiculo',
+            ], 422);
+        }
+
         $status = $this->despachoCorridaService->atualizarDisponibilidade(
             motorista: $motorista,
             disponivel: (bool) $dados['disponivel'],

@@ -13,6 +13,7 @@ use App\Models\CorridaFinanceiro;
 use App\Models\CorridaOpcao;
 use App\Models\Motorista;
 use App\Models\MotoristaVeiculo;
+use App\Models\Passageiro;
 use App\Models\ProdutosCorrida;
 use App\Models\StatusBusca;
 use App\Models\Tarifa;
@@ -159,8 +160,12 @@ class DespachoCorridaService
 
         $veiculo = $this->veiculoEmUso($motorista, $status);
 
+        // quem também é passageiro não recebe a própria corrida
+        $meuPassageiroId = Passageiro::where('user_id', $motorista->user_id)->value('id');
+
         $corridas = Corrida::where('status_corrida', 'solicitada')
             ->whereNull('motorista_id')
+            ->when($meuPassageiroId !== null, fn (Builder $consulta) => $consulta->where('passageiro_id', '!=', $meuPassageiroId))
             ->where(fn (Builder $consulta) => $this->queOVeiculoAtende($consulta, $veiculo))
             ->with(['corrida_destinos', 'corrida_financeiro', 'opcoes.produto', 'produto'])
             ->orderBy('tempo_solicitacao')
@@ -272,6 +277,10 @@ class DespachoCorridaService
      */
     public function validarMotoristaParaCorrida(Motorista $motorista, Corrida $corrida): array
     {
+        if ($corrida->passageiro()->value('user_id') === $motorista->user_id) {
+            throw new RuntimeException('Você não pode atender a sua própria corrida.', 409);
+        }
+
         $ocupado = Corrida::where('motorista_id', $motorista->id)
             ->whereKeyNot($corrida->id)
             ->whereIn('status_corrida', self::STATUS_ATIVOS_MOTORISTA)
