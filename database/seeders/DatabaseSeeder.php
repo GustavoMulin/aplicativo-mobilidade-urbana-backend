@@ -13,7 +13,6 @@ use App\Models\Passageiro;
 use App\Models\ProdutoCategoria;
 use App\Models\ProdutosCorrida;
 use App\Models\Tarifa;
-use App\Models\User;
 use App\Models\Veiculo;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
@@ -60,12 +59,6 @@ class DatabaseSeeder extends Seeder
             PrecificacaoSeeder::class,
             GestoresSeeder::class,
         ]);
-        $userMotorista = User::create([
-            'name' => 'Diogo Guimarães',
-            'data_nascimento' => '2022-04-11',
-            'cpf' => '01149897295',
-        ]);
-
         Cidade::factory()->create([
             'id' => 4382,
             'nome' => 'Porto Velho',
