@@ -11,6 +11,8 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 #[Fillable([
     'user_id',
+    'foto',
+    'foto_thumbnail',
     'nome',
     'cpf',
     'data_nascimento',
