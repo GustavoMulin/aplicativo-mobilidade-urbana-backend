@@ -21,7 +21,7 @@ use Throwable;
 
 class MotoristaCadastroController extends Controller
 {
-    public const APROVADO = 'aprovado';
+    public const ATIVO = 'ativo';
 
     public function __construct(
         protected AtualizarSituacaoMotoristaService $atualizarSituacaoMotoristaService,
@@ -91,7 +91,7 @@ class MotoristaCadastroController extends Controller
 
         $motorista = Motorista::firstOrNew(['user_id' => $request->user()->id]);
 
-        if ($motorista->exists && $motorista->status === self::APROVADO) {
+        if ($motorista->exists && $motorista->status === self::ATIVO) {
             return response()->json([
                 'message' => 'Seu cadastro já foi aprovado. Fale com o suporte para alterar a CNH.',
             ], 409);
@@ -103,7 +103,7 @@ class MotoristaCadastroController extends Controller
             'cnh_expiracao' => $dados['cnh_expiracao'],
             'ear' => (bool) $dados['ear'],
             ...array_intersect_key($dados, ['observacao' => true]),
-            'status' => 'em_analise',
+            'status' => 'pendente',
         ])->save();
 
         return response()->json([
@@ -138,7 +138,7 @@ class MotoristaCadastroController extends Controller
             ['status' => 'pendente']
         );
 
-        if ($motorista->status === self::APROVADO) {
+        if ($motorista->status === self::ATIVO) {
             return response()->json([
                 'message' => 'Seu cadastro já foi aprovado. Fale com o suporte para trocar documentos.',
             ], 409);
@@ -258,9 +258,8 @@ class MotoristaCadastroController extends Controller
             ]);
         }
 
-        // O atalho local continua dispensando a análise, inclusive sem frota.
-        $motorista->update(['status' => self::APROVADO]);
-        $situacao = self::APROVADO;
+        // Mesmo no desenvolvimento, só ativa com todos os documentos vinculados.
+        $situacao = $this->atualizarSituacaoMotoristaService->executar($motorista);
 
         return response()->json([
             'message' => 'Cadastro aprovado (atalho de desenvolvimento).',
