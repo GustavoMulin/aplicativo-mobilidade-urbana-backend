@@ -4,11 +4,11 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 
-use App\Enums\UserType;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -21,8 +21,6 @@ use PHPOpenSourceSaver\JWTAuth\Contracts\JWTSubject;
     'cpf',
     'data_nascimento',
     'email',
-    'foto',
-    'foto_thumbnail',
     'status',
     'password',
 ])]
@@ -66,7 +64,15 @@ class User extends Authenticatable implements JWTSubject
         ];
     }
 
-    protected $casts = [
-        'type' => UserType::class,
-    ];
+    /** @return HasOne<Passageiro, $this> */
+    public function passageiro(): HasOne
+    {
+        return $this->hasOne(Passageiro::class);
+    }
+
+    /** @return HasOne<Motorista, $this> */
+    public function motorista(): HasOne
+    {
+        return $this->hasOne(Motorista::class);
+    }
 }

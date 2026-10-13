@@ -16,8 +16,10 @@ use Illuminate\Http\Request;
 class AvaliacoesCorridaController extends Controller
 {
     private const RELACOES = [
-        'motorista.user:id,name,foto',
-        'passageiro.user:id,name,foto',
+        'motorista:id,user_id,foto',
+        'motorista.user:id,name',
+        'passageiro:id,user_id,foto',
+        'passageiro.user:id,name',
         'veiculo',
         'corrida_destinos',
         'corrida_financeiro',

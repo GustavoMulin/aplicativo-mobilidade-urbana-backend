@@ -38,8 +38,6 @@ function usuarioDoSaque(string $papel): User
         'cpf' => null,
         'data_nascimento' => '1990-01-01',
         'email' => "$papel-$id@example.test",
-        'foto' => null,
-        'foto_thumbnail' => null,
         'status' => 'ativo',
         'password' => 'senha-de-teste',
     ]);

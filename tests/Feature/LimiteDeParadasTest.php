@@ -14,8 +14,6 @@ it('não cota corrida com mais de 2 paradas', function () {
         'cpf' => substr(preg_replace('/\D/', '', $id).'00000000000', 0, 11),
         'data_nascimento' => '1990-01-01',
         'email' => "paradas-$id@example.test",
-        'foto' => null,
-        'foto_thumbnail' => null,
         'status' => 'ativo',
         'password' => 'senha-de-teste',
     ]);
