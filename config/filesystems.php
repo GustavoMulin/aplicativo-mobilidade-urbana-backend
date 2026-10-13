@@ -47,6 +47,13 @@ return [
             'report' => false,
         ],
 
+        'perfis_fotos' => [
+            'driver' => 'local',
+            'root' => public_path('images/perfis'),
+            'visibility' => 'public',
+            'throw' => true,
+        ],
+
         'gestores_fotos' => [
             'driver' => 'local',
             'root' => public_path('images/gestores'),
