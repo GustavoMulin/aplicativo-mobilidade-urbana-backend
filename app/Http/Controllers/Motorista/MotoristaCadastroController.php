@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Motorista;
 use App\Models\MotoristaDocumento;
 use App\Models\MotoristaVeiculo;
+use App\Models\Veiculo;
 use App\Services\ArmazenarAnexoMotoristaService;
 use App\Services\AtualizarSituacaoMotoristaService;
 use App\Services\CrlvVeiculoService;
@@ -211,9 +212,9 @@ class MotoristaCadastroController extends Controller
         $situacao = DB::transaction(function () use ($motorista, $registro): string {
             $motorista = Motorista::lockForUpdate()->findOrFail($motorista->id);
             $registro = MotoristaDocumento::lockForUpdate()->findOrFail($registro->id);
-            $veiculo = $registro->tipo_documento === TipoDocumentoMotorista::CRLV ? $registro->veiculo : null;
+            $veiculo = $registro->tipo_documento === TipoDocumentoMotorista::CRLV->value ? $registro->veiculo : null;
             $registro->anexosDoEnvio()->delete();
-            if ($veiculo !== null) {
+            if ($veiculo instanceof Veiculo) {
                 app(CrlvVeiculoService::class)->sincronizarStatus($veiculo);
             }
 
@@ -236,35 +237,99 @@ class MotoristaCadastroController extends Controller
     {
         abort_unless(App::environment(['local', 'testing']), 404);
 
-        $motorista = Motorista::firstOrNew(['user_id' => $request->user()->id]);
+        $motorista = DB::transaction(function () use ($request): Motorista {
+            $motorista = Motorista::firstOrNew(['user_id' => $request->user()->id]);
+            $motorista->numero_registro ??= '00000000000';
+            $motorista->cnh_categoria ??= 'B';
+            $motorista->cnh_expiracao ??= now()->addYears(5)->toDateString();
+            $motorista->ear ??= false;
+            $motorista->save();
 
-        $motorista->numero_registro ??= '00000000000';
-        $motorista->cnh_categoria ??= 'B';
-        $motorista->cnh_expiracao ??= now()->addYears(5)->toDateString();
-        $motorista->ear ??= false;
-        $motorista->save();
+            $veiculos = MotoristaVeiculo::where('motorista_id', $motorista->id)
+                ->with('veiculo')
+                ->get()
+                ->pluck('veiculo')
+                ->filter()
+                ->values();
 
-        foreach (TipoDocumentoMotorista::valores() as $tipo) {
-            MotoristaDocumento::create([
-                'motorista_id' => $motorista->id,
-                'tipo_documento' => $tipo,
-                'name' => "dev-$tipo.pdf",
-                'type' => 'pdf',
-                'mime_type' => 'application/pdf',
-                'size' => 0,
-                'path' => "motorista_documentos_anexos/dev-$tipo.pdf",
-                'url' => rtrim((string) config('app.url'), '/')."/motorista_documentos_anexos/dev-$tipo.pdf",
-                'status' => 'aprovado',
-            ]);
-        }
+            if ($veiculos->isEmpty()) {
+                $veiculo = $this->criarVeiculoDev($motorista);
+                MotoristaVeiculo::create([
+                    'motorista_id' => $motorista->id,
+                    'veiculo_id' => $veiculo->id,
+                ]);
+                $veiculos->push($veiculo);
+            }
 
-        // O atalho local continua dispensando a análise, inclusive sem frota.
-        $motorista->update(['status' => self::APROVADO]);
-        $situacao = self::APROVADO;
+            foreach (TipoDocumentoMotorista::valores() as $tipo) {
+                if ($tipo === TipoDocumentoMotorista::CRLV->value) {
+                    continue;
+                }
+
+                $this->aprovarDocumentoDev($motorista, $tipo);
+            }
+
+            foreach ($veiculos as $veiculo) {
+                $veiculo->update(['status' => self::APROVADO]);
+                $this->aprovarDocumentoDev($motorista, TipoDocumentoMotorista::CRLV->value, $veiculo);
+            }
+
+            MotoristaDocumento::where('motorista_id', $motorista->id)
+                ->where('tipo_documento', TipoDocumentoMotorista::CRLV)
+                ->whereNull('veiculo_id')
+                ->where('path', 'like', 'motorista_documentos_anexos/dev-%')
+                ->delete();
+
+            $motorista->update(['status' => self::APROVADO]);
+
+            return $motorista;
+        });
 
         return response()->json([
             'message' => 'Cadastro aprovado (atalho de desenvolvimento).',
-            'situacao' => $situacao,
+            'situacao' => $motorista->status,
+        ]);
+    }
+
+    private function criarVeiculoDev(Motorista $motorista): Veiculo
+    {
+        $sufixo = str_pad((string) $motorista->id, 2, '0', STR_PAD_LEFT);
+
+        return Veiculo::create([
+            'marca' => 'Chevrolet',
+            'modelo' => 'Onix de desenvolvimento',
+            'ano_fabricacao' => now()->year,
+            'ano_modelo' => now()->year,
+            'cor' => 'Branco',
+            'placa' => 'DEV'.($motorista->id % 10).'A'.substr($sufixo, -2),
+            'renavam' => '9'.str_pad((string) $motorista->id, 10, '0', STR_PAD_LEFT),
+            'categoria' => 'carro',
+            'status' => self::APROVADO,
+            'uf' => 'RO',
+        ]);
+    }
+
+    private function aprovarDocumentoDev(Motorista $motorista, string $tipo, ?Veiculo $veiculo = null): void
+    {
+        $nome = $veiculo === null ? "dev-$tipo.pdf" : "dev-$tipo-{$veiculo->id}.pdf";
+
+        MotoristaDocumento::updateOrCreate([
+            'motorista_id' => $motorista->id,
+            'tipo_documento' => $tipo,
+            'veiculo_id' => $veiculo?->id,
+            'ordem' => 0,
+        ], [
+            'name' => $nome,
+            'type' => 'pdf',
+            'mime_type' => 'application/pdf',
+            'size' => 0,
+            'path' => "motorista_documentos_anexos/$nome",
+            'url' => rtrim((string) config('app.url'), '/')."/motorista_documentos_anexos/$nome",
+            'informacoes_complementares' => $veiculo === null ? null : [
+                'placa' => $veiculo->placa,
+                'renavam' => $veiculo->renavam,
+            ],
+            'status' => self::APROVADO,
         ]);
     }
 

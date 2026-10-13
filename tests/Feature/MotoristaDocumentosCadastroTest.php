@@ -2,6 +2,7 @@
 
 use App\Models\Motorista;
 use App\Models\MotoristaDocumento;
+use App\Models\MotoristaVeiculo;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -35,7 +36,7 @@ it('aceita PDF e imagem do próprio motorista e mostra só o envio mais recente'
 
     $motorista = Motorista::where('user_id', $usuario->id)->firstOrFail();
     $documentos = MotoristaDocumento::where('motorista_id', $motorista->id)->orderBy('id')->get();
-    expect($documentos)->toHaveCount(2)
+    expect($documentos)->toHaveCount(3)
         ->and($documentos[0]->path)->not->toBe($documentos[1]->path)
         ->and($documentos[1]->name)->toBe('nova-cnh.png');
     Storage::disk('motorista_documentos_anexos')->assertExists(basename($documentos[0]->path));
@@ -79,8 +80,8 @@ it('não exibe documentos de outra conta no cadastro', function () {
     $segundo = User::factory()->create();
 
     $this->actingAs($primeiro, 'jwt')->post('/api/motorista/cadastro/documentos', [
-        'tipo_documento' => 'crlv',
-        'arquivo' => UploadedFile::fake()->create('crlv.pdf', 100, 'application/pdf'),
+        'tipo_documento' => 'cnh',
+        'arquivo' => UploadedFile::fake()->create('cnh.pdf', 100, 'application/pdf'),
     ], ['Accept' => 'application/json'])->assertCreated();
 
     $this->actingAs($segundo, 'jwt')->getJson('/api/motorista/cadastro')
@@ -104,11 +105,22 @@ it('atalho de desenvolvimento aprova o motorista sem passar pela análise', func
     expect($documentos)->toHaveCount(4)
         ->and($documentos->pluck('status')->unique()->all())->toBe(['aprovado']);
 
-    // veículo continua pendente: o atalho cobre CNH e documentos, não frota
+    $vinculo = MotoristaVeiculo::where('motorista_id', $motorista->id)->firstOrFail();
+    expect($documentos->firstWhere('tipo_documento', 'crlv')?->veiculo_id)->toBe($vinculo->veiculo_id);
+
     $this->actingAs($usuario, 'jwt')->getJson('/api/motorista/cadastro')
         ->assertOk()
         ->assertJsonPath('situacao', 'aprovado')
-        ->assertJsonPath('pendencias', ['veiculo']);
+        ->assertJsonPath('pendencias', []);
+
+    $this->actingAs($usuario, 'jwt')->getJson('/api/motorista/situacao')
+        ->assertOk()
+        ->assertJsonPath('disponivel', false);
+
+    $this->actingAs($usuario, 'jwt')->getJson('/api/motorista/me/veiculos')
+        ->assertOk()
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.status', 'aprovado');
 });
 
 it('atalho de desenvolvimento não duplica CNH já preenchida', function () {
@@ -126,7 +138,13 @@ it('atalho de desenvolvimento não duplica CNH já preenchida', function () {
         ->postJson('/api/motorista/cadastro/aprovar-dev')
         ->assertOk();
 
-    expect($motorista->fresh()->numero_registro)->toBe('11122233344');
+    $this->actingAs($usuario, 'jwt')
+        ->postJson('/api/motorista/cadastro/aprovar-dev')
+        ->assertOk();
+
+    expect($motorista->fresh()->numero_registro)->toBe('11122233344')
+        ->and(MotoristaVeiculo::where('motorista_id', $motorista->id)->count())->toBe(1)
+        ->and(MotoristaDocumento::where('motorista_id', $motorista->id)->count())->toBe(4);
 });
 
 it('salva e retorna o numero de registro como identificacao unica da CNH', function () {
