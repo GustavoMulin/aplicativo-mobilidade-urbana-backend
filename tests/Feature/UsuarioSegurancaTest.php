@@ -18,7 +18,6 @@ it('mantém a foto anterior quando o novo upload é inválido', function () {
     $passageiro = Passageiro::create([
         'user_id' => $user->id,
         'foto' => 'https://example.test/images/foto-anterior.jpg',
-        'foto_thumbnail' => 'https://example.test/images/miniatura-anterior.jpg',
         'status' => 'ativo',
     ]);
 
@@ -29,8 +28,7 @@ it('mantém a foto anterior quando o novo upload é inválido', function () {
         ])
         ->assertUnprocessable();
 
-    expect($passageiro->fresh()->foto)->toBe('https://example.test/images/foto-anterior.jpg')
-        ->and($passageiro->fresh()->foto_thumbnail)->toBe('https://example.test/images/miniatura-anterior.jpg');
+    expect($passageiro->fresh()->foto)->toBe('https://example.test/images/foto-anterior.jpg');
 });
 
 it('recusa imagem SVG e arquivos acima de cinco megabytes', function () {
@@ -59,10 +57,8 @@ it('salva uma foto válida com nome gerado pelo servidor e remove os arquivos co
 
     $resposta->assertOk();
     $foto = $passageiro->fresh()->foto;
-    $miniatura = $passageiro->fresh()->foto_thumbnail;
     expect($foto)->not->toContain('foto-enviada.jpg')
-        ->and($foto)->toContain('/images/')
-        ->and($miniatura)->toContain('/images/');
+        ->and($foto)->toContain('/images/');
 
     $this->deleteJson('/api/usuario-remover-foto-perfil/'.$user->id)->assertOk();
     expect($passageiro->fresh()->foto)->toBeNull();
@@ -300,8 +296,6 @@ it('migra credenciais dos perfis sem perder a foto específica', function () {
             'telefone',
             'email',
             'email_verified_at',
-            'foto',
-            'foto_thumbnail',
             'remember_token',
             'status',
             'password',
@@ -314,6 +308,7 @@ it('migra credenciais dos perfis sem perder a foto específica', function () {
         $table->timestamp('email_verified_at')->nullable();
         $table->rememberToken();
         $table->string('password');
+        $table->string('foto_thumbnail')->nullable();
     });
 
     $agora = now();
@@ -348,5 +343,8 @@ it('migra credenciais dos perfis sem perder a foto específica', function () {
         ->and($conta->password)->toBe($senha)
         ->and($perfil->foto)->toBe('https://example.test/perfil-passageiro.jpg')
         ->and(Schema::hasColumn('passageiros', 'email'))->toBeFalse()
-        ->and(Schema::hasColumn('passageiros', 'password'))->toBeFalse();
+        ->and(Schema::hasColumn('passageiros', 'password'))->toBeFalse()
+        ->and(Schema::hasColumn('passageiros', 'foto_thumbnail'))->toBeFalse()
+        ->and(Schema::hasColumn('users', 'foto'))->toBeFalse()
+        ->and(Schema::hasColumn('users', 'foto_thumbnail'))->toBeFalse();
 });

@@ -47,7 +47,6 @@ class DatabaseSeeder extends Seeder
         //     'email' => 'passageiro@example.com',
         //     'cpf' => "01149897296",
         //     'foto' => "",
-        //     'foto_thumbnail' => "",
         //     'status' => "ativo",
         // ]);
 

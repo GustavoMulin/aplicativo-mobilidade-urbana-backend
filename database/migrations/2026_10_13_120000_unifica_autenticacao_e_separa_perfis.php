@@ -27,12 +27,6 @@ return new class extends Migration
             if (! Schema::hasColumn('users', 'email_verified_at')) {
                 $table->timestamp('email_verified_at')->nullable()->after('email');
             }
-            if (! Schema::hasColumn('users', 'foto')) {
-                $table->string('foto')->nullable()->after('email_verified_at');
-            }
-            if (! Schema::hasColumn('users', 'foto_thumbnail')) {
-                $table->string('foto_thumbnail')->nullable()->after('foto');
-            }
             if (! Schema::hasColumn('users', 'remember_token')) {
                 $table->rememberToken();
             }
@@ -51,20 +45,14 @@ return new class extends Migration
             if (! Schema::hasColumn('motoristas', 'foto')) {
                 $table->string('foto')->nullable()->after('user_id');
             }
-            if (! Schema::hasColumn('motoristas', 'foto_thumbnail')) {
-                $table->string('foto_thumbnail')->nullable()->after('foto');
-            }
         });
 
         Schema::table('passageiros', function (Blueprint $table): void {
             if (! Schema::hasColumn('passageiros', 'foto')) {
                 $table->string('foto')->nullable()->after('user_id');
             }
-            if (! Schema::hasColumn('passageiros', 'foto_thumbnail')) {
-                $table->string('foto_thumbnail')->nullable()->after('foto');
-            }
             if (! Schema::hasColumn('passageiros', 'status')) {
-                $table->string('status')->default('ativo')->after('foto_thumbnail');
+                $table->string('status')->default('ativo')->after('foto');
             }
         });
     }
@@ -88,22 +76,19 @@ return new class extends Migration
                     DB::table('users')->where('id', $usuario->id)->update($dadosUsuario);
                 }
 
-                $foto = $usuario->foto ?? null;
-                $miniatura = $usuario->foto_thumbnail ?? null;
+                $foto = $usuario->foto ?? $usuario->foto_thumbnail ?? null;
                 $status = $usuario->status ?? 'ativo';
 
                 if ($passageiro !== null) {
                     DB::table('passageiros')->where('id', $passageiro->id)->update([
-                        'foto' => $passageiro->foto ?? $foto,
-                        'foto_thumbnail' => $passageiro->foto_thumbnail ?? $miniatura,
+                        'foto' => $passageiro->foto ?? $passageiro->foto_thumbnail ?? $foto,
                         'status' => $passageiro->status ?? $status,
                     ]);
                 }
 
                 if ($motorista !== null) {
                     DB::table('motoristas')->where('id', $motorista->id)->update([
-                        'foto' => $motorista->foto ?? $foto,
-                        'foto_thumbnail' => $motorista->foto_thumbnail ?? $miniatura,
+                        'foto' => $motorista->foto ?? $motorista->foto_thumbnail ?? $foto,
                     ]);
                 }
             }
@@ -113,13 +98,21 @@ return new class extends Migration
     private function removerCredenciaisDuplicadasDosPerfis(): void
     {
         foreach (['motoristas', 'passageiros'] as $tabela) {
-            $colunas = collect(['telefone', 'email', 'email_verified_at', 'remember_token', 'password'])
+            $colunas = collect(['telefone', 'email', 'email_verified_at', 'remember_token', 'password', 'foto_thumbnail'])
                 ->filter(fn (string $coluna): bool => Schema::hasColumn($tabela, $coluna))
                 ->all();
 
             if ($colunas !== []) {
                 Schema::table($tabela, fn (Blueprint $table) => $table->dropColumn($colunas));
             }
+        }
+
+        $colunasLegadas = collect(['foto', 'foto_thumbnail'])
+            ->filter(fn (string $coluna): bool => Schema::hasColumn('users', $coluna))
+            ->all();
+
+        if ($colunasLegadas !== []) {
+            Schema::table('users', fn (Blueprint $table) => $table->dropColumn($colunasLegadas));
         }
     }
 

@@ -17,7 +17,6 @@ class Passageiro extends Model
         'user_id',
         'media_avaliacao',
         'foto',
-        'foto_thumbnail',
         'status',
     ];
 

@@ -18,7 +18,6 @@ use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Image;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use PHPOpenSourceSaver\JWTAuth\JWTGuard;
@@ -101,7 +100,6 @@ class UsuarioController extends Controller
             'telefone' => $dados['telefone'] ?? null,
             'cpf' => $dados['cpf'],
             'email' => $dados['email'],
-            'foto' => null,
             'status' => 'ativo',
             'password' => bcrypt($dados['password']),
         ]);
@@ -233,18 +231,11 @@ class UsuarioController extends Controller
                 : rtrim((string) config('app.url'), '/');
             $extension = $image->extension();
             $imageName = Str::uuid().'.'.$extension;
-            $thumbnail = Str::uuid().'_thumbnail.'.$extension;
 
             File::ensureDirectoryExists(public_path('images'));
 
-            File::put(
-                public_path('images/').$thumbnail,
-                Image::fromUpload($image)->resize(100, 100)->toBytes(),
-            );
-
             $image->move(public_path('images'), $imageName);
             $perfil->setAttribute('foto', $host.'/images/'.$imageName);
-            $perfil->setAttribute('foto_thumbnail', $host.'/images/'.$thumbnail);
             $perfil->saveOrFail();
         }
     }
@@ -260,12 +251,9 @@ class UsuarioController extends Controller
         $perfil = $perfis->garantir($user, $perfis->solicitado($request));
         abort_if($perfis->indisponivel($perfil), 403, 'Este perfil está indisponível.');
         $foto = $perfil->getAttribute('foto');
-        $thumbnail = $perfil->getAttribute('foto_thumbnail');
         $perfil->setAttribute('foto', null);
-        $perfil->setAttribute('foto_thumbnail', null);
         $perfil->saveOrFail();
         $this->excluirImagemPerfil($foto);
-        $this->excluirImagemPerfil($thumbnail);
 
         return response()->json([
             'success' => true,
@@ -285,15 +273,12 @@ class UsuarioController extends Controller
         $perfil = $perfis->garantir($user, $perfis->solicitado($request));
         abort_if($perfis->indisponivel($perfil), 403, 'Este perfil está indisponível.');
         $fotoAnterior = $perfil->getAttribute('foto');
-        $thumbnailAnterior = $perfil->getAttribute('foto_thumbnail');
         $this->criarImagemPerfil($request, $perfil);
         $this->excluirImagemPerfil($fotoAnterior);
-        $this->excluirImagemPerfil($thumbnailAnterior);
 
         return response()->json([
             'user' => [
                 'foto' => $perfil->getAttribute('foto'),
-                'foto_thumbnail' => $perfil->getAttribute('foto_thumbnail'),
             ],
             'success' => true,
             'message' => 'Foto alterada com sucesso!',

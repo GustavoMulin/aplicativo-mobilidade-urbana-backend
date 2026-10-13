@@ -85,7 +85,6 @@ class PerfilUsuarioService
             'cpf' => $user->cpf,
             'data_nascimento' => $user->data_nascimento,
             'foto' => $registro?->getAttribute('foto'),
-            'foto_thumbnail' => $registro?->getAttribute('foto_thumbnail'),
             'status' => $registro?->getAttribute('status'),
             'perfil' => $perfil,
             'motorista' => $perfil === self::MOTORISTA,

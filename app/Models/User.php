@@ -21,8 +21,6 @@ use PHPOpenSourceSaver\JWTAuth\Contracts\JWTSubject;
     'cpf',
     'data_nascimento',
     'email',
-    'foto',
-    'foto_thumbnail',
     'status',
     'password',
 ])]

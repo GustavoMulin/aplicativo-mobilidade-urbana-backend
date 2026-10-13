@@ -159,7 +159,11 @@ class NegociacaoCorridaService
             ->where('expira_em', '<=', now())
             ->update(['status' => 'expirada']);
 
-        $propostas = CorridaNegociacoes::with(['motorista.user:id,name,foto', 'veiculo'])
+        $propostas = CorridaNegociacoes::with([
+            'motorista:id,user_id,foto',
+            'motorista.user:id,name',
+            'veiculo',
+        ])
             ->where('corrida_id', $corrida->id)
             ->where('status', 'pendente')
             ->orderByDesc('updated_at')
@@ -202,7 +206,7 @@ class NegociacaoCorridaService
                 'expira_em' => $proposta->expira_em?->toIso8601String(),
                 'motorista' => [
                     'nome' => $nome === '' ? 'Motorista' : explode(' ', $nome)[0],
-                    'foto' => $proposta->motorista?->user?->foto,
+                    'foto' => $proposta->motorista?->foto,
                     'nota' => isset($notas[$proposta->motorista_id]) ? round((float) $notas[$proposta->motorista_id], 2) : null,
                     'corridas' => (int) ($totais[$proposta->motorista_id] ?? 0),
                 ],

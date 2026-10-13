@@ -19,10 +19,6 @@ return new class extends Migration
             $table->date('data_nascimento');
             $table->string('email')->unique();
             $table->timestamp('email_verified_at')->nullable();
-            // Mantidos temporariamente para compatibilidade com bancos antigos.
-            // A aplicação usa as fotos e o status dos perfis.
-            $table->string('foto')->nullable();
-            $table->string('foto_thumbnail')->nullable();
             $table->rememberToken();
             $table->string('status');
             $table->string('password');
