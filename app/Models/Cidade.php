@@ -8,8 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * Cidade onde a publicidade é exibida. (Corridas e tarifas usam a tabela
- * municipios.)
+ * Cidade do app: tarifa por cidade, corrida e publicidade.
  *
  * @property int $id
  * @property string $nome

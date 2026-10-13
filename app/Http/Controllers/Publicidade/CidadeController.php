@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreCidadeRequest;
 use App\Http\Requests\UpdateCidadeRequest;
 use App\Models\Cidade;
+use App\Models\Tarifa;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\JsonResponse;
@@ -68,6 +69,13 @@ class CidadeController extends Controller
             ], 409);
         }
 
+        if (Tarifa::where('cidade_id', $cidade->id)->exists()) {
+            return response()->json([
+                'message' => 'Esta cidade tem tarifas próprias. Apague ou mova as tarifas dela antes.',
+            ], 409);
+        }
+
+        // corridas da cidade ficam sem cidade (a chave é nullOnDelete)
         $cidade->delete();
 
         return response()->json(['message' => 'Cidade excluída.']);

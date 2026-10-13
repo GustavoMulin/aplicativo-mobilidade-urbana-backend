@@ -2,6 +2,7 @@
 
 use App\Models\BannerPublicidade;
 use App\Models\Cidade;
+use App\Models\Tarifa;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -181,4 +182,13 @@ it('não exclui cidade que tem banner, nem apagado', function () {
 it('exige login para publicidade e cidades', function () {
     $this->getJson('/api/publicidades')->assertUnauthorized();
     $this->getJson('/api/cidades')->assertUnauthorized();
+});
+
+it('não exclui cidade com tarifa própria', function () {
+    $this->actingAs(usuarioPublicidade(), 'jwt');
+    $cidade = Cidade::factory()->create();
+    Tarifa::create(['cidade_id' => $cidade->id, 'tarifa_base' => 2, 'ativo' => true]);
+
+    $this->deleteJson('/api/cidades/'.$cidade->id)->assertStatus(409);
+    expect(Cidade::find($cidade->id))->not->toBeNull();
 });
