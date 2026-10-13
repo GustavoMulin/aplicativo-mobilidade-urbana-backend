@@ -15,6 +15,13 @@ return new class extends Migration
             $table->id();
             $table->integer('user_id');
             $table->decimal('media_avaliacao', 10, 2)->nullable();
+            $table->string('telefone')->unique()->nullable();
+            $table->string('email')->unique();
+            $table->timestamp('email_verified_at')->nullable();
+            $table->string('foto')->nullable();
+            $table->rememberToken();
+            $table->string('password');
+            $table->string('status');
             $table->softDeletes();
             $table->timestamps();
         });

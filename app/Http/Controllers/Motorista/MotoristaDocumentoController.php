@@ -9,12 +9,16 @@ use App\Models\Motorista;
 use App\Models\MotoristaDocumento;
 use App\Services\ArmazenarAnexoMotoristaService;
 use App\Services\AtualizarSituacaoMotoristaService;
+use App\Services\CrlvVeiculoService;
+use App\Services\DocumentosMotoristaService;
+use App\Services\InformacoesDocumentoMotoristaService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Throwable;
 
@@ -37,29 +41,11 @@ class MotoristaDocumentoController extends Controller
 
     public function resumo(int $motoristaId): JsonResponse
     {
-        Motorista::findOrFail($motoristaId);
+        $motorista = Motorista::findOrFail($motoristaId);
 
-        $ultimosEnvios = MotoristaDocumento::query()
-            ->where('motorista_id', $motoristaId)
-            ->whereIn('tipo_documento', TipoDocumentoMotorista::valores())
-            ->selectRaw('MAX(id) as id')
-            ->groupBy('tipo_documento');
+        $service = app(DocumentosMotoristaService::class);
 
-        $documentos = MotoristaDocumento::query()
-            ->whereIn('id', $ultimosEnvios)
-            ->get()
-            ->keyBy(fn (MotoristaDocumento $documento): string => $documento->tipo_documento->value);
-
-        $dados = array_map(fn (array $tipo): array => [
-            ...$tipo,
-            'id' => null,
-            'status' => null,
-            'url' => null,
-            'verso' => null,
-            ...($documentos->get($tipo['tipo_documento'])?->toArray() ?? []),
-        ], TipoDocumentoMotorista::catalogo());
-
-        return response()->json(['data' => $dados]);
+        return response()->json(['data' => $service->resumo($motorista), 'veiculos' => $service->veiculos($motorista)]);
     }
 
     public function baixar(Request $request, int $motoristaDocumentoId): StreamedResponse
@@ -87,7 +73,7 @@ class MotoristaDocumentoController extends Controller
      */
     public function index(): LengthAwarePaginator
     {
-        return MotoristaDocumento::paginate();
+        return MotoristaDocumento::where('ordem', 0)->paginate();
     }
 
     /**
@@ -95,45 +81,53 @@ class MotoristaDocumentoController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        $informacoesService = app(InformacoesDocumentoMotoristaService::class);
+        $informacoesService->normalizar($request);
+        $crlvService = app(CrlvVeiculoService::class);
+        $crlvService->normalizar($request);
         $dados = $request->validate([
+            ...$informacoesService->regras($request),
             'motorista_id' => 'required|integer|exists:motoristas,id',
+            'origem' => 'sometimes|required|in:documentos,veiculos|prohibited_unless:tipo_documento,crlv',
             'tipo_documento' => ['required', Rule::enum(TipoDocumentoMotorista::class)],
             'arquivo' => 'required|file|mimes:jpg,jpeg,png,pdf|max:2048',
             'arquivo_verso' => $this->armazenarAnexoMotoristaService->regrasVerso($request),
-            'cnh' => 'sometimes|array:nome,cpf,data_nascimento,numero_registro,cnh_categoria,primeira_habilitacao,data_emissao,cnh_expiracao,ear,observacao|prohibited_unless:tipo_documento,'.TipoDocumentoMotorista::CNH->value,
-            'cnh.nome' => 'nullable|string|max:255',
-            'cnh.cpf' => ['nullable', 'string', 'regex:/^[0-9]{11}$/'],
-            'cnh.data_nascimento' => 'nullable|date_format:Y-m-d',
-            'cnh.numero_registro' => 'nullable|string|max:20',
-            'cnh.cnh_categoria' => 'nullable|string|max:20',
-            'cnh.primeira_habilitacao' => 'nullable|date_format:Y-m-d',
-            'cnh.data_emissao' => 'nullable|date_format:Y-m-d',
-            'cnh.cnh_expiracao' => 'nullable|date_format:Y-m-d',
-            'cnh.ear' => 'nullable|boolean',
-            'cnh.observacao' => 'nullable|string|max:5000',
+
         ]);
 
+        if ($dados['tipo_documento'] === 'crlv' && isset($dados['veiculo_id'])) {
+            $veiculo = $crlvService->veiculoVinculado((int) $dados['motorista_id'], (int) $dados['veiculo_id']);
+            $crlvService->validar($veiculo, $dados['informacoes_complementares']);
+        }
         $anexo = $this->armazenarAnexoMotoristaService->salvarEnvio($request);
 
         try {
             $resultado = DB::transaction(function () use ($dados, $anexo): array {
                 $motorista = Motorista::lockForUpdate()->findOrFail($dados['motorista_id']);
 
-                if ($dados['tipo_documento'] === TipoDocumentoMotorista::CNH->value && isset($dados['cnh'])) {
-                    $motorista->update($dados['cnh']);
+                if ($dados['tipo_documento'] === TipoDocumentoMotorista::CNH->value && isset($dados['informacoes_complementares'])) {
+                    $motorista->update($dados['informacoes_complementares']);
                 }
 
-                $motoristaDocumento = MotoristaDocumento::create([
+                $veiculo = $dados['tipo_documento'] === 'crlv'
+                    ? app(CrlvVeiculoService::class)->registrarOuAtualizar($motorista, $dados['informacoes_complementares'], $dados['veiculo_id'] ?? null, $dados['origem'] ?? 'documentos')
+                    : null;
+
+                $motoristaDocumento = $this->armazenarAnexoMotoristaService->registrarEnvio([
                     'motorista_id' => $motorista->id,
                     'tipo_documento' => $dados['tipo_documento'],
-                    ...$anexo,
+                    'veiculo_id' => $veiculo?->id,
+                    'informacoes_complementares' => $dados['informacoes_complementares'] ?? null,
                     'status' => 'em_analise',
-                ]);
+                ], $anexo);
 
+                if ($veiculo !== null) {
+                    app(CrlvVeiculoService::class)->sincronizarStatus($veiculo);
+                }
                 $situacao = $this->atualizarSituacaoMotoristaService->executar($motorista);
 
                 return [
-                    'data' => $motoristaDocumento,
+                    'data' => $motoristaDocumento->load(['veiculo']),
                     'motorista' => $motorista->fresh(),
                     'situacao_motorista' => $situacao,
                 ];
@@ -156,7 +150,7 @@ class MotoristaDocumentoController extends Controller
      */
     public function show(int $motoristaDocumentoId): LengthAwarePaginator
     {
-        return MotoristaDocumento::where('motorista_id', $motoristaDocumentoId)->paginate();
+        return MotoristaDocumento::where('motorista_id', $motoristaDocumentoId)->where('ordem', 0)->paginate();
     }
 
     /**
@@ -180,16 +174,20 @@ class MotoristaDocumentoController extends Controller
             ], 404);
         }
 
+        $motoristaDocumento = $motoristaDocumento->principalDoEnvio();
         $this->armazenarAnexoMotoristaService->excluirEnvio($motoristaDocumento->toArray());
 
-        // Remove do banco (soft delete)
-        $motoristaId = $motoristaDocumento->motorista_id;
-        $motoristaDocumento->delete();
+        $situacao = DB::transaction(function () use ($motoristaDocumento): ?string {
+            $motorista = Motorista::lockForUpdate()->find($motoristaDocumento->motorista_id);
+            $registro = MotoristaDocumento::lockForUpdate()->findOrFail($motoristaDocumento->id);
+            $veiculo = $registro->tipo_documento === TipoDocumentoMotorista::CRLV ? $registro->veiculo : null;
+            $registro->anexosDoEnvio()->delete();
+            if ($veiculo !== null) {
+                app(CrlvVeiculoService::class)->sincronizarStatus($veiculo);
+            }
 
-        $motorista = Motorista::find($motoristaId);
-        $situacao = $motorista === null
-            ? null
-            : $this->atualizarSituacaoMotoristaService->executar($motorista);
+            return $motorista === null ? null : $this->atualizarSituacaoMotoristaService->executar($motorista);
+        });
 
         return response()->json([
             'message' => 'Documento removido com sucesso',
@@ -205,7 +203,7 @@ class MotoristaDocumentoController extends Controller
             'descricao_reprovacao' => ['exclude_unless:status,reprovado', 'exclude_unless:motivo_reprovacao,outro', 'required', 'string', 'max:2000'],
         ]);
 
-        $motoristaDocumento = MotoristaDocumento::findOrFail($motoristaDocumentoId);
+        $motoristaDocumento = MotoristaDocumento::findOrFail($motoristaDocumentoId)->principalDoEnvio();
 
         // ninguém aprova o próprio documento
         $motoristaDoUsuario = Motorista::where('user_id', $request->user()->id)->value('id');
@@ -217,15 +215,26 @@ class MotoristaDocumentoController extends Controller
         // }
 
         $situacao = DB::transaction(function () use ($motoristaDocumento, $dados): ?string {
+            $motorista = Motorista::lockForUpdate()->find($motoristaDocumento->motorista_id);
             $registro = MotoristaDocumento::lockForUpdate()->findOrFail($motoristaDocumento->id);
             $reprovado = $dados['status'] === 'reprovado';
-            $registro->update([
+            if ($dados['status'] === 'aprovado' && $registro->tipo_documento === TipoDocumentoMotorista::CRLV) {
+                $service = app(CrlvVeiculoService::class);
+                if (! $registro->veiculo_id || ! $registro->informacoes_complementares) {
+                    throw ValidationException::withMessages(['informacoes_complementares' => 'Vincule o CRLV a um veículo e confira os dados antes de aprovar.']);
+                }
+                $veiculo = $service->veiculoVinculado($registro->motorista_id, $registro->veiculo_id);
+                $service->validar($veiculo, $registro->informacoes_complementares);
+            }
+            $registro->anexosDoEnvio()->update([
                 'status' => $dados['status'],
                 'motivo_reprovacao' => $reprovado ? $dados['motivo_reprovacao'] : null,
                 'descricao_reprovacao' => $reprovado && $dados['motivo_reprovacao'] === MotivoReprovacaoDocumento::OUTRO->value
                     ? $dados['descricao_reprovacao'] : null,
             ]);
-            $motorista = Motorista::lockForUpdate()->find($registro->motorista_id);
+            if ($registro->tipo_documento === TipoDocumentoMotorista::CRLV && $registro->veiculo !== null) {
+                app(CrlvVeiculoService::class)->sincronizarStatus($registro->veiculo);
+            }
 
             return $motorista === null ? null : $this->atualizarSituacaoMotoristaService->executar($motorista);
         });

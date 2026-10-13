@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Route;
 
 require __DIR__.'/api/auth.php';
+require __DIR__.'/api/gestao.php';
 require __DIR__.'/api/webhooks.php';
 
 Route::middleware('auth:jwt')->group(function () {

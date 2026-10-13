@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Enums\TipoDocumentoMotorista;
 use App\Models\Motorista;
-use App\Models\MotoristaDocumento;
 
 class AtualizarSituacaoMotoristaService
 {
@@ -24,47 +23,33 @@ class AtualizarSituacaoMotoristaService
      */
     public function documentosQueFaltam(Motorista $motorista): array
     {
-        $documentos = MotoristaDocumento::where('motorista_id', $motorista->id)
-            ->whereIn('tipo_documento', TipoDocumentoMotorista::valores())
-            ->orderByDesc('id')
-            ->get(['tipo_documento', 'status'])
-            ->unique('tipo_documento');
+        $service = app(DocumentosMotoristaService::class);
+        $documentos = $service->ultimos($motorista);
+        $faltam = [];
+        foreach (TipoDocumentoMotorista::cases() as $tipo) {
+            if ($tipo === TipoDocumentoMotorista::CRLV) {
+                $veiculos = $service->veiculos($motorista);
+                if ($veiculos->isEmpty() || $veiculos->contains(fn ($v) => ! $documentos->contains(fn ($d) => $d->tipo_documento === $tipo && $d->veiculo_id === $v->id && $d->status === 'aprovado'))) {
+                    $faltam[] = $tipo->value;
+                }
+            } elseif (! $documentos->contains(fn ($d) => $d->tipo_documento === $tipo && $d->status === 'aprovado')) {
+                $faltam[] = $tipo->value;
+            }
+        }
 
-        $aprovados = $documentos
-            ->where('status', 'aprovado')
-            ->pluck('tipo_documento')
-            ->map(fn (TipoDocumentoMotorista $tipo): string => $tipo->value)
-            ->all();
-
-        return array_values(array_diff(TipoDocumentoMotorista::valores(), $aprovados));
+        return $faltam;
     }
 
     private function calcular(Motorista $motorista): string
     {
-        $documentos = MotoristaDocumento::where('motorista_id', $motorista->id)
-            ->whereIn('tipo_documento', TipoDocumentoMotorista::valores())
-            ->orderByDesc('id')
-            ->get(['tipo_documento', 'status'])
-            ->unique('tipo_documento');
-
+        $documentos = app(DocumentosMotoristaService::class)->ultimos($motorista);
         if ($documentos->isEmpty()) {
             return 'pendente';
         }
-
-        // um documento reprovado reprova o cadastro: o motorista precisa
-        // reenviar aquele item
-        if ($documentos->contains(fn ($documento) => $documento->status === 'reprovado')) {
+        if ($documentos->contains(fn ($d) => $d->status === 'reprovado')) {
             return 'reprovado';
         }
 
-        $aprovados = $documentos
-            ->where('status', 'aprovado')
-            ->pluck('tipo_documento')
-            ->map(fn (TipoDocumentoMotorista $tipo): string => $tipo->value)
-            ->unique();
-
-        $faltam = array_diff(TipoDocumentoMotorista::valores(), $aprovados->all());
-
-        return $faltam === [] ? 'aprovado' : 'em_analise';
+        return $this->documentosQueFaltam($motorista) === [] ? 'aprovado' : 'em_analise';
     }
 }

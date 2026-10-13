@@ -2,6 +2,7 @@
 
 // CODEX: 25 linhas alteradas neste arquivo; mensagens em português.
 
+use App\Http\Middleware\ValidarGestor;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -24,6 +25,7 @@ return Application::configure(basePath: dirname(__DIR__))
         LaravelServiceProvider::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->alias(['gestor' => ValidarGestor::class]);
         $middleware->redirectGuestsTo(fn () => null);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

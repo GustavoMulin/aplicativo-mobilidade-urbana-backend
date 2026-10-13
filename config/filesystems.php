@@ -47,6 +47,12 @@ return [
             'report' => false,
         ],
 
+        'gestores_fotos' => [
+            'driver' => 'local',
+            'root' => public_path('images/gestores'),
+            'visibility' => 'public',
+            'throw' => true,
+        ],
         'motorista_documentos_anexos' => [
             'driver' => 'local',
             'root' => public_path('motorista_documentos_anexos'),
