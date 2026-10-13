@@ -32,6 +32,7 @@ class Corrida extends Model
         'tempo_chegada_origem',
         'status_corrida',
         'status_negociacao',
+        'aceite_automatico',
         'cancelado_por',
         'tempo_solicitacao',
         'tempo_aceite',
@@ -60,6 +61,7 @@ class Corrida extends Model
     protected function casts(): array
     {
         return [
+            'aceite_automatico' => 'boolean',
             'tempo_chegada_origem' => 'datetime',
             'tempo_solicitacao' => 'datetime',
             'tempo_aceite' => 'datetime',

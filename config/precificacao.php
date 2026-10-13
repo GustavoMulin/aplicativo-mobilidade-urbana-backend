@@ -33,7 +33,7 @@ return [
     // Negocia: oferta do passageiro entre essas frações do preço sugerido
     'negocia_oferta_minima_fracao' => (float) env('NEGOCIA_OFERTA_MINIMA_FRACAO', 0.7),
     'negocia_oferta_maxima_fracao' => (float) env('NEGOCIA_OFERTA_MAXIMA_FRACAO', 2.0),
-    'negocia_proposta_validade_segundos' => (int) env('NEGOCIA_PROPOSTA_VALIDADE_SEGUNDOS', 90),
+    'negocia_proposta_validade_segundos' => (int) env('NEGOCIA_PROPOSTA_VALIDADE_SEGUNDOS', 30),
     // escolhida a proposta no Pix ou cartão, o motorista espera o pagamento por até
     'negocia_pagamento_limite_segundos' => (int) env('NEGOCIA_PAGAMENTO_LIMITE_SEGUNDOS', 300),
 ];

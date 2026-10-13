@@ -25,7 +25,7 @@ beforeEach(function () {
         'abacatepay.api_key' => 'abc_dev_teste',
         'abacatepay.base_url' => 'https://api.abacatepay.com',
         'abacatepay.validade_segundos' => 900,
-        'precificacao.negocia_proposta_validade_segundos' => 90,
+        'precificacao.negocia_proposta_validade_segundos' => 30,
         'precificacao.negocia_pagamento_limite_segundos' => 300,
     ]);
 
@@ -236,6 +236,20 @@ it('contraproposta do motorista aguarda a escolha do passageiro', function () {
     negPropor($motorista, $corrida, 17.0)->assertStatus(422);
     negPropor(negMotorista('Moto Rider', 'moto'), $corrida)->assertStatus(409)
         ->assertJsonPath('message', 'Seu veículo não atende a categoria pedida nesta corrida.');
+});
+
+it('a lista de propostas diz quanto tempo falta, pelo relógio do servidor', function () {
+    Carbon::setTestNow(now()->startOfSecond());
+    $passageiro = negPassageiro();
+    $corrida = negPedir($passageiro, 9.0);
+    negPropor(negMotorista(), $corrida)->assertCreated();
+    Carbon::setTestNow(now()->addSeconds(12));
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->getJson("/api/corridas/{$corrida->id}/propostas")
+        ->assertOk()
+        ->assertJsonPath('propostas.0.validade_segundos', 30)
+        ->assertJsonPath('propostas.0.restante_segundos', 18);
 });
 
 it('o passageiro vê as propostas valendo, da mais recente para a mais antiga', function () {
@@ -491,4 +505,131 @@ it('a nova oferta precisa ser maior que a atual e caber no teto', function () {
     $this->actingAs(negPassageiro()->user, 'jwt')
         ->postJson("/api/corridas/{$corrida->id}/oferta", ['valor_oferecido' => 10.0])
         ->assertNotFound();
+});
+
+it('a proposta vale 30 segundos', function () {
+    Carbon::setTestNow(now()->startOfSecond());
+    $corrida = negPedir(negPassageiro(), 9.0);
+
+    $resposta = negPropor(negMotorista(), $corrida)->assertCreated();
+
+    expect($resposta->json('expira_em'))->toBe(now()->addSeconds(30)->toIso8601String());
+});
+
+it('com o aceite automático, o primeiro motorista que aceita a oferta é escolhido', function () {
+    $passageiro = negPassageiro();
+    $corrida = negPedir($passageiro, 9.0);
+    $caro = negMotorista('Bruno Reis');
+    $primeiro = negMotorista('Ana Lima');
+    $segundo = negMotorista('Carlos Souza');
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->putJson("/api/corridas/{$corrida->id}/aceite-automatico", ['ativo' => true])
+        ->assertOk()
+        ->assertJsonPath('aceite_automatico', true)
+        ->assertJsonPath('escolhida', false);
+
+    // quem pede mais que a oferta não é escolhido sozinho
+    negPropor($caro, $corrida, 10.0)->assertCreated()->assertJsonPath('status', 'pendente');
+    expect($corrida->refresh()->motorista_id)->toBeNull();
+
+    negPropor($primeiro, $corrida)->assertCreated()->assertJsonPath('status', 'aceita');
+    negPropor($segundo, $corrida)->assertStatus(409);
+
+    $corrida->refresh();
+    expect($corrida->motorista_id)->toBe($primeiro->id)
+        ->and($corrida->status_corrida)->toBe('aceita')
+        ->and($corrida->aceite_automatico)->toBeTrue()
+        ->and((float) $corrida->corrida_financeiro->valor_pago_passageiro)->toBe(9.0)
+        ->and(CorridaNegociacoes::where('motorista_id', $caro->id)->value('status'))->toBe('recusada');
+});
+
+it('sem o aceite automático, quem aceita a oferta espera a escolha do passageiro', function () {
+    $corrida = negPedir(negPassageiro(), 9.0);
+
+    negPropor(negMotorista(), $corrida)->assertCreated()->assertJsonPath('status', 'pendente');
+
+    expect($corrida->refresh()->motorista_id)->toBeNull()
+        ->and($corrida->aceite_automatico)->toBeFalse();
+});
+
+it('ligar o aceite automático escolhe quem já tinha aceitado a oferta', function () {
+    $passageiro = negPassageiro();
+    $corrida = negPedir($passageiro, 9.0);
+    $velho = negMotorista('Ana Lima');
+    $novo = negMotorista('Carlos Souza');
+    negPropor($velho, $corrida)->assertCreated();
+    negPropor($novo, $corrida)->assertCreated();
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->putJson("/api/corridas/{$corrida->id}/aceite-automatico", ['ativo' => true])
+        ->assertOk()
+        ->assertJsonPath('escolhida', true);
+
+    expect($corrida->refresh()->motorista_id)->toBe($velho->id)
+        ->and($corrida->status_corrida)->toBe('aceita');
+});
+
+it('o aceite automático pula o motorista que ficou ocupado e escolhe o seguinte', function () {
+    $passageiro = negPassageiro();
+    $corrida = negPedir($passageiro, 9.0);
+    $ocupado = negMotorista('Ana Lima');
+    $livre = negMotorista('Carlos Souza');
+    negPropor($ocupado, $corrida)->assertCreated();
+    negPropor($livre, $corrida)->assertCreated();
+    StatusBusca::where('motorista_id', $ocupado->id)->update(['disponivel' => false]);
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->putJson("/api/corridas/{$corrida->id}/aceite-automatico", ['ativo' => true])
+        ->assertOk()
+        ->assertJsonPath('escolhida', true);
+
+    expect($corrida->refresh()->motorista_id)->toBe($livre->id)
+        ->and(CorridaNegociacoes::where('motorista_id', $ocupado->id)->value('status'))->toBe('expirada');
+});
+
+it('desligar o aceite automático volta a esperar a escolha do passageiro', function () {
+    $passageiro = negPassageiro();
+    $corrida = negPedir($passageiro, 9.0);
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->putJson("/api/corridas/{$corrida->id}/aceite-automatico", ['ativo' => true])->assertOk();
+    $this->putJson("/api/corridas/{$corrida->id}/aceite-automatico", ['ativo' => false])
+        ->assertOk()
+        ->assertJsonPath('aceite_automatico', false);
+
+    negPropor(negMotorista(), $corrida)->assertCreated()->assertJsonPath('status', 'pendente');
+    expect($corrida->refresh()->motorista_id)->toBeNull();
+});
+
+it('só o dono da corrida em negociação mexe no aceite automático', function () {
+    $passageiro = negPassageiro();
+    $corrida = negPedir($passageiro, 9.0);
+
+    $this->actingAs(negPassageiro()->user, 'jwt')
+        ->putJson("/api/corridas/{$corrida->id}/aceite-automatico", ['ativo' => true])
+        ->assertNotFound();
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->putJson("/api/corridas/{$corrida->id}/aceite-automatico", [])
+        ->assertStatus(422);
+
+    $corrida->update(['status_corrida' => 'cancelada']);
+    $this->putJson("/api/corridas/{$corrida->id}/aceite-automatico", ['ativo' => true])
+        ->assertStatus(409);
+});
+
+it('a corrida atual do passageiro informa se o aceite automático está ligado', function () {
+    $passageiro = negPassageiro();
+    $corrida = negPedir($passageiro, 9.0);
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->getJson('/api/minha-corrida-atual?perfil=passageiro')
+        ->assertOk()
+        ->assertJsonPath('corrida.aceite_automatico', false);
+
+    $this->putJson("/api/corridas/{$corrida->id}/aceite-automatico", ['ativo' => true])->assertOk();
+
+    $this->getJson('/api/minha-corrida-atual?perfil=passageiro')
+        ->assertJsonPath('corrida.aceite_automatico', true);
 });
