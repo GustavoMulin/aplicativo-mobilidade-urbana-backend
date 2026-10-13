@@ -313,6 +313,19 @@ class CorridaController extends Controller
             );
         }
 
+        // Negocia no Pix/cartão: o motorista escolhido espera o pagamento até
+        // este horário (depois a corrida é cancelada e ele fica livre)
+        if ($corrida->status_corrida === 'aguardando_pagamento'
+            && $corrida->motorista_id !== null
+            && $corrida->tempo_aceite !== null) {
+            $corrida->setAttribute(
+                'pagamento_expira_em',
+                Carbon::parse($corrida->tempo_aceite)
+                    ->addSeconds((int) config('precificacao.negocia_pagamento_limite_segundos', 300))
+                    ->toIso8601String()
+            );
+        }
+
         $posicao = $corrida->motorista_id === null
             ? null
             : $this->despachoCorridaService->posicaoDoMotorista($corrida->motorista_id);

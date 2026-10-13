@@ -298,6 +298,29 @@ it('no Pix a cobrança sai na escolha e o motorista só vai depois do pagamento'
         ->and($corrida->status_pagamento)->toBe('pago');
 });
 
+it('o motorista que espera o Pix do Negocia sabe até quando, e vê o passageiro', function () {
+    negPixGerado();
+    $passageiro = negPassageiro();
+    $corrida = negPedir($passageiro, 9.0, 'pix');
+    $carlos = negMotorista();
+    $proposta = negPropor($carlos, $corrida, 10.0)->json('id');
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->postJson("/api/corridas/{$corrida->id}/propostas/{$proposta}/escolher")
+        ->assertOk();
+
+    $aceite = $corrida->refresh()->tempo_aceite;
+    $resposta = $this->actingAs($carlos->user, 'jwt')
+        ->getJson('/api/minha-corrida-atual?perfil=motorista')
+        ->assertOk()
+        ->assertJsonPath('corrida.status_corrida', 'aguardando_pagamento')
+        ->assertJsonPath('passageiro.foto', null);
+
+    expect($resposta->json('corrida.pagamento_expira_em'))
+        ->toBe($aceite->copy()->addSeconds((int) config('precificacao.negocia_pagamento_limite_segundos'))->toIso8601String())
+        ->and($resposta->json('passageiro.nome'))->not->toBeNull();
+});
+
 it('Pix não pago no prazo do Negocia cancela e libera o motorista', function () {
     // o banco grava o horário sem fração de segundo
     Carbon::setTestNow(now()->startOfSecond());
