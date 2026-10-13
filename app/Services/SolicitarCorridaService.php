@@ -26,6 +26,10 @@ class SolicitarCorridaService
         'em_andamento',
     ];
 
+    public function __construct(
+        private readonly EnderecoPorCoordenadaService $enderecoPorCoordenada,
+    ) {}
+
     /**
      * @param  list<string>  $produtosCodigos  categorias aceitas pelo passageiro; a corrida vai para quem atende qualquer uma
      * @param  array{nome: string, telefone: string}|null  $convidado  quem vai viajar, se não for o titular da conta
@@ -230,13 +234,22 @@ class SolicitarCorridaService
                 $indice === $ultimo => 'destino',
                 default => 'parada',
             };
+            $texto = (string) ($endereco['formattedAddress'] ?? '');
+
+            // "Localização Atual" não diz ao motorista onde buscar
+            if ($this->enderecoPorCoordenada->semEndereco($texto)) {
+                $texto = $this->enderecoPorCoordenada->executar(
+                    (float) $endereco['latitude'],
+                    (float) $endereco['longitude'],
+                ) ?? $texto;
+            }
 
             CorridaDestino::create([
                 'corrida_id' => $corrida->id,
-                'nome_local' => $endereco['formattedAddress'] ?? '',
+                'nome_local' => $texto,
                 'tipo' => $tipo,
                 'ordem' => $indice,
-                'endereco' => $endereco['formattedAddress'] ?? '',
+                'endereco' => $texto,
                 'latitude' => $endereco['latitude'],
                 'longitude' => $endereco['longitude'],
             ]);

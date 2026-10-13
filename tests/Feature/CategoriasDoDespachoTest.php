@@ -12,6 +12,7 @@ use App\Models\Tarifa;
 use App\Models\User;
 use App\Models\Veiculo;
 use App\Services\DespachoCorridaService;
+use App\Services\EnderecoPorCoordenadaService;
 use App\Services\PagamentoCorridaService;
 use Database\Seeders\PrecificacaoSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -406,4 +407,25 @@ it('quem também é passageiro não recebe nem aceita a própria corrida', funct
     expect(catOfertadas($motorista))->toBe([$deOutro->id])
         ->and(fn () => app(DespachoCorridaService::class)->aceitar($motorista, $minha->id))
         ->toThrow(RuntimeException::class, 'própria corrida');
+});
+
+it('pedido com embarque "Localização Atual" grava a rua para o motorista', function () {
+    // a consulta ao Google tem teste próprio (EnderecoDoEmbarqueTest)
+    $this->partialMock(EnderecoPorCoordenadaService::class, function ($servico) {
+        $servico->shouldReceive('executar')->once()->with(-8.76, -63.9004)->andReturn('R. Brasília, 2940 · São Cristóvão');
+    });
+    $passageiro = catPassageiro();
+    $cotacao = catCotacao($passageiro, ['pop' => 12.0]);
+    $enderecos = $cotacao->enderecos;
+    $enderecos[0]['formattedAddress'] = 'Localização Atual';
+    $cotacao->update(['enderecos' => $enderecos]);
+
+    $id = $this->actingAs($passageiro->user, 'jwt')->postJson('/api/corridas', [
+        'cotacao_id' => $cotacao->id,
+        'produtos_codigos' => ['pop'],
+        'metodo_pagamento' => 'dinheiro',
+    ])->assertCreated()->json('id');
+
+    expect(Corrida::findOrFail($id)->corrida_destinos()->where('tipo', 'origem')->value('endereco'))
+        ->toBe('R. Brasília, 2940 · São Cristóvão');
 });
