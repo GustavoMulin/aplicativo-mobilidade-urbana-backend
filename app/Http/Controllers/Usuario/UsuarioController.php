@@ -3,7 +3,10 @@
 namespace App\Http\Controllers\Usuario;
 
 use App\Http\Controllers\Controller;
+use App\Models\AvaliacoesCorrida;
+use App\Models\Corrida;
 use App\Models\Motorista;
+use App\Models\Passageiro;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -50,6 +53,23 @@ class UsuarioController extends Controller
     {
         /** @var ?User $user */
         $user = Auth::user();
+
+        if ($user === null) {
+            return null;
+        }
+
+        // nota que os motoristas deram ao passageiro (o menu do app mostra)
+        $passageiroId = Passageiro::where('user_id', $user->id)->value('id');
+        $nota = $passageiroId === null ? null : AvaliacoesCorrida::query()
+            ->join('corridas', 'corridas.id', '=', 'avaliacoes_corridas.corrida_id')
+            ->where('avaliacoes_corridas.tipo_usuario', 'motorista')
+            ->where('corridas.passageiro_id', $passageiroId)
+            ->avg('avaliacoes_corridas.nota');
+        $user->setAttribute('nota_passageiro', $nota === null ? null : round((float) $nota, 2));
+        // o perfil do passageiro mostra quantas corridas ele já fez
+        $user->setAttribute('corridas_passageiro', $passageiroId === null ? 0 : Corrida::where('passageiro_id', $passageiroId)
+            ->where('status_corrida', 'finalizada')
+            ->count());
 
         return $user;
     }

@@ -14,6 +14,9 @@ class Corrida extends Model
     /** @use HasFactory<CorridaFactory> */
     use HasFactory;
 
+    // embarque + no máximo 2 paradas + destino (regra do produto)
+    public const MAX_PARADAS = 2;
+
     protected $fillable = [
         'codigo_corrida',
         'produto_id',
@@ -48,6 +51,25 @@ class Corrida extends Model
     ];
 
     /**
+     * Os horários saem em ISO com fuso (2026-10-09T12:34:45.000000Z). Sem o
+     * cast iam como "2026-10-09 12:34:45" em UTC e o app lia como hora local:
+     * o histórico mostrava 12:34 para uma corrida pedida às 08:34.
+     *
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'tempo_chegada_origem' => 'datetime',
+            'tempo_solicitacao' => 'datetime',
+            'tempo_aceite' => 'datetime',
+            'tempo_embarque' => 'datetime',
+            'tempo_inicio' => 'datetime',
+            'tempo_final' => 'datetime',
+        ];
+    }
+
+    /**
      * @return HasMany<AvaliacoesCorrida, $this>
      */
     public function avaliacoes(): HasMany
@@ -69,6 +91,22 @@ class Corrida extends Model
     public function corrida_destinos(): HasMany
     {
         return $this->hasMany(CorridaDestino::class);
+    }
+
+    /**
+     * @return HasMany<CorridaNegociacoes, $this>
+     */
+    public function negociacoes(): HasMany
+    {
+        return $this->hasMany(CorridaNegociacoes::class);
+    }
+
+    /**
+     * @return HasMany<CorridaOpcao, $this>
+     */
+    public function opcoes(): HasMany
+    {
+        return $this->hasMany(CorridaOpcao::class);
     }
 
     /**

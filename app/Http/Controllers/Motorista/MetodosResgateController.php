@@ -70,9 +70,7 @@ class MetodosResgateController extends Controller
             return $metodo;
         });
 
-        if (! $ehPix) {
-            Cache::forget(StoreMetodoResgateRequest::chaveDoCodigo((int) $request->user()->id));
-        }
+        Cache::forget(StoreMetodoResgateRequest::chaveDoCodigo((int) $request->user()->id));
 
         $criado = $metodo->wasRecentlyCreated;
 
@@ -111,7 +109,7 @@ class MetodosResgateController extends Controller
     }
 
     /**
-     * Código de 6 dígitos para confirmar a conta bancária. Ainda não há
+     * Código de 6 dígitos para confirmar a chave Pix ou a conta. Ainda não há
      * provedor de SMS: o código vai para o log e, em desenvolvimento, volta
      * na resposta.
      */

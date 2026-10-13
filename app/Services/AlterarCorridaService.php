@@ -21,7 +21,7 @@ use RuntimeException;
  *   (trocar de/para dinheiro no meio do trajeto muda como o motorista recebe);
  * - destino: na busca vale na hora; depois do aceite vira um pedido que o
  *   motorista aceita ou recusa, com o preço recalculado; em categorias de
- *   preço negociado o destino não muda depois do aceite.
+ *   preço negociado o destino não muda.
  */
 class AlterarCorridaService
 {
@@ -30,9 +30,6 @@ class AlterarCorridaService
     private const STATUS_ALTERAVEIS = ['solicitada', 'em_busca', 'aceita', 'motorista_chegou', 'em_andamento'];
 
     private const PAGAMENTOS_DIGITAIS = ['pix', 'cartao'];
-
-    // mesmo limite da tela de paradas do app
-    private const MAX_PARADAS = 4;
 
     // cada pedido recalcula a rota na API paga do Google
     private const MAX_ALTERACOES_POR_CORRIDA = 6;
@@ -54,8 +51,9 @@ class AlterarCorridaService
             return false;
         }
 
-        return in_array($corrida->status_corrida, ['solicitada', 'em_busca'], true)
-            || ! $this->precoNegociado($corrida);
+        // no Negocia o preço é a oferta do passageiro: mudar o trajeto, mesmo
+        // durante a negociação, recalcularia pela tarifa e apagaria a oferta
+        return ! $this->precoNegociado($corrida);
     }
 
     public function alterarPagamento(int $passageiroId, int $corridaId, string $metodo): Corrida
@@ -115,7 +113,7 @@ class AlterarCorridaService
 
             $semMotorista = in_array($corrida->status_corrida, ['solicitada', 'em_busca'], true);
 
-            if (! $semMotorista && $this->precoNegociado($corrida)) {
+            if ($this->precoNegociado($corrida)) {
                 throw new RuntimeException(
                     'Em corridas com preço negociado o trajeto não pode ser alterado. Cancele e peça uma nova corrida.',
                     409
@@ -134,8 +132,9 @@ class AlterarCorridaService
                 ? count($itinerario) - 2
                 : $paradasAtuais->count() + ($tipo === 'parada' ? 1 : 0);
 
-            if ($totalDeParadas > self::MAX_PARADAS) {
-                throw new RuntimeException('A corrida já tem o máximo de '.self::MAX_PARADAS.' paradas.', 422);
+            // as paradas já feitas continuam no itinerário e contam no limite
+            if ($totalDeParadas > Corrida::MAX_PARADAS) {
+                throw new RuntimeException('A corrida pode ter no máximo '.Corrida::MAX_PARADAS.' paradas.', 422);
             }
 
             if ($itinerario !== null) {
@@ -181,6 +180,7 @@ class AlterarCorridaService
 
             if ($semMotorista) {
                 $this->aplicar($corrida, $alteracao, $orcamento);
+                $this->reprecificarOpcoes($corrida, $orcamento['distancia_km'], $orcamento['tempo_min']);
                 $alteracao->update(['status' => 'aplicada', 'respondida_em' => now()]);
                 Avisar::semQuebrar(new CorridasDisponiveisAlteradas);
             }
@@ -461,6 +461,29 @@ class AlterarCorridaService
             'taxa_plataforma' => ($passageiroCentavos - $motoristaCentavos) / 100,
             'composicao' => $preco['composicao'] + ['espera_motorista' => $esperaMotoristaCentavos / 100],
         ];
+    }
+
+    /**
+     * Ainda sem motorista, cada categoria aceita no pedido passa a valer o
+     * novo trajeto: quem aceitar depois recebe o preço certo da sua categoria.
+     */
+    private function reprecificarOpcoes(Corrida $corrida, float $distanciaKm, float $tempoMin): void
+    {
+        foreach ($corrida->opcoes()->get() as $opcao) {
+            $tarifa = $opcao->tarifa_id === null ? null : Tarifa::find($opcao->tarifa_id);
+
+            if ($tarifa === null) {
+                continue;
+            }
+
+            $preco = $this->calcularPrecoCorridaService->executar($tarifa, $distanciaKm, $tempoMin);
+
+            $opcao->update([
+                'valor_passageiro' => $preco['valores']['valor_passageiro'],
+                'valor_motorista' => $preco['valores']['valor_motorista'],
+                'categoria' => $preco,
+            ]);
+        }
     }
 
     /**

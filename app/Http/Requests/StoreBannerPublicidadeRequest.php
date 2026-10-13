@@ -8,22 +8,34 @@ use Illuminate\Foundation\Http\FormRequest;
 class StoreBannerPublicidadeRequest extends FormRequest
 {
     /**
-     * Determine if the user is authorized to make this request.
+     * Qualquer conta logada, como o resto do painel de gestão por enquanto
+     * (não existe papel de gestão; ver pendências de produção).
      */
     public function authorize(): bool
     {
-        return false;
+        return true;
     }
 
     /**
-     * Get the validation rules that apply to the request.
-     *
      * @return array<string, ValidationRule|array<mixed>|string>
      */
     public function rules(): array
     {
         return [
-            //
+            'cidade_id' => 'required|integer|exists:cidades,id',
+            'titulo' => 'required|string|max:120',
+            'arquivo' => 'required|file|mimes:jpg,jpeg,png,webp|max:'.config('publicidade.tamanho_maximo_kb'),
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'arquivo.mimes' => 'Envie a imagem do banner em JPG, PNG ou WEBP.',
+            'arquivo.max' => 'A imagem do banner pode ter no máximo :max KB.',
         ];
     }
 }

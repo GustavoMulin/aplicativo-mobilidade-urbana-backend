@@ -8,10 +8,14 @@ use App\Models\Notificacao;
 // de notificações do aplicativo; o texto nunca leva dados pessoais de terceiros
 class NotificarUsuarioService
 {
-    public function executar(int $userId, string $titulo, string $mensagem): void
+    /**
+     * @param  'passageiro'|'motorista'  $perfil  app em que a notificação aparece
+     */
+    public function executar(int $userId, string $perfil, string $titulo, string $mensagem): void
     {
         Notificacao::create([
             'user_id' => $userId,
+            'perfil' => $perfil,
             'titulo' => mb_substr($titulo, 0, 120),
             'mensagem' => mb_substr($mensagem, 0, 255),
         ]);

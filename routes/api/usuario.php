@@ -24,8 +24,8 @@ Route::post('locais-salvos', [LocaisSalvosController::class, 'store']);
 Route::delete('locais-salvos/{localSalvo}', [LocaisSalvosController::class, 'destroy'])->whereNumber('localSalvo');
 
 // busca de destino: lugares em alta e sugestões de lugar
-Route::get('locais/populares', [LocaisPopularesController::class, 'index'])->middleware('throttle:30,1');
-Route::post('locais/sugestoes', [SugestoesLocaisController::class, 'store'])->middleware('throttle:10,1');
+Route::get('locais/populares', [LocaisPopularesController::class, 'index'])->middleware('throttle:30,1,locais-populares');
+Route::post('locais/sugestoes', [SugestoesLocaisController::class, 'store'])->middleware('throttle:10,1,sugestoes-locais');
 
 Route::get('/user', function (Request $request) {
     /** @var JWTGuard */

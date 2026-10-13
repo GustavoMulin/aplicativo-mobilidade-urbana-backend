@@ -70,15 +70,15 @@ class DatabaseSeeder extends Seeder
         Cidade::factory()->create([
             'id' => 4382,
             'nome' => 'Porto Velho',
-            'uf' => 21,
+            'uf' => 'RO',
             'ibge' => 1100205,
         ]);
 
         Cidade::factory()->create([
             'id' => 4350,
             'nome' => 'Ariquemes',
-            'uf' => 21,
-            'ibge' => 1100205,
+            'uf' => 'RO',
+            'ibge' => 1100023,
         ]);
 
         // BannerPublicidade::factory()->create([

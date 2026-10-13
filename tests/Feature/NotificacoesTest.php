@@ -86,3 +86,59 @@ it('lista só as notificações do usuário e marca como lidas', function () {
     expect(Notificacao::where('user_id', $eu->id)->whereNull('lida_em')->count())->toBe(0);
     expect(Notificacao::where('user_id', $outro->id)->whereNull('lida_em')->count())->toBe(1);
 });
+
+it('cada app vê só as notificações do seu papel, e as antigas aparecem nos dois', function () {
+    $eu = usuarioNotificacao('duplo');
+    Notificacao::create(['user_id' => $eu->id, 'perfil' => 'motorista', 'titulo' => 'Corrida finalizada', 'mensagem' => 'Você recebe R$ 10,00']);
+    Notificacao::create(['user_id' => $eu->id, 'perfil' => 'passageiro', 'titulo' => 'Viagem concluída', 'mensagem' => 'Valor da corrida: R$ 12,00']);
+    Notificacao::create(['user_id' => $eu->id, 'titulo' => 'Antiga', 'mensagem' => 'sem perfil']);
+
+    $this->actingAs($eu, 'jwt')
+        ->getJson('/api/notificacoes?perfil=passageiro')
+        ->assertOk()
+        ->assertJsonCount(2, 'data')
+        ->assertJsonPath('nao_lidas', 2)
+        ->assertJsonMissing(['titulo' => 'Corrida finalizada']);
+
+    $this->postJson('/api/notificacoes/lidas?perfil=passageiro')->assertOk();
+
+    // marcar as do passageiro como lidas não mexe nas do motorista
+    $this->getJson('/api/notificacoes?perfil=motorista')
+        ->assertOk()
+        ->assertJsonCount(2, 'data')
+        ->assertJsonPath('nao_lidas', 1);
+
+    $this->getJson('/api/notificacoes?perfil=outro')->assertUnprocessable();
+});
+
+it('a corrida finalizada avisa cada um no seu papel', function () {
+    $motorista = Motorista::create([
+        'user_id' => usuarioNotificacao('motorista2')->id,
+        'status' => 'aprovado',
+    ]);
+    $passageiro = Passageiro::create(['user_id' => usuarioNotificacao('passageiro2')->id]);
+    $corrida = Corrida::create([
+        'codigo_corrida' => 'NOT-'.Str::upper(Str::random(8)),
+        'motorista_id' => $motorista->id,
+        'passageiro_id' => $passageiro->id,
+        'status_corrida' => 'em_andamento',
+        'tempo_solicitacao' => now()->subHour(),
+        'tempo_aceite' => now()->subHour(),
+        'tempo_inicio' => now()->subMinutes(10),
+        'metodo_pagamento' => 'dinheiro',
+        'status_pagamento' => 'pendente',
+    ]);
+    CorridaDestino::create(['corrida_id' => $corrida->id, 'nome_local' => 'Destino', 'tipo' => 'destino', 'ordem' => 0, 'endereco' => 'Destino', 'latitude' => -8.7, 'longitude' => -63.9]);
+    CorridaFinanceiro::create([
+        'corrida_id' => $corrida->id,
+        'valor_pago_passageiro' => 15.5,
+        'valor_motorista' => 14.0,
+        'valor_liquido_motorista' => 14.0,
+        'metodo_pagamento' => 'dinheiro',
+    ]);
+
+    app(DespachoCorridaService::class)->transicionar($motorista, $corrida->id, 'finalizar');
+
+    expect(Notificacao::where('user_id', $motorista->user_id)->value('perfil'))->toBe('motorista')
+        ->and(Notificacao::where('user_id', $passageiro->user_id)->value('perfil'))->toBe('passageiro');
+});

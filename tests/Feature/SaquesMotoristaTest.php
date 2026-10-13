@@ -57,7 +57,7 @@ function motoristaDoSaque(): Motorista
     ]);
 }
 
-function corridaPaga(Motorista $motorista, string $metodo, float $liquido, float $taxa): void
+function corridaPaga(Motorista $motorista, string $metodo, float $liquido, float $taxa, string $statusPagamento = 'pago'): void
 {
     $passageiro = Passageiro::create(['user_id' => usuarioDoSaque('passageiro')->id, 'media_avaliacao' => null]);
     $corrida = Corrida::create([
@@ -69,7 +69,7 @@ function corridaPaga(Motorista $motorista, string $metodo, float $liquido, float
         'tempo_aceite' => now()->subHour(),
         'tempo_final' => now()->subMinutes(10),
         'metodo_pagamento' => $metodo,
-        'status_pagamento' => 'pago',
+        'status_pagamento' => $statusPagamento,
     ]);
     DB::table('corrida_financeiros')->insert([
         'corrida_id' => $corrida->id,
@@ -81,6 +81,14 @@ function corridaPaga(Motorista $motorista, string $metodo, float $liquido, float
     ]);
 }
 
+function codigoDoSaque(Motorista $motorista): string
+{
+    return (string) test()->actingAs($motorista->user, 'jwt')
+        ->postJson('/api/motorista/me/metodos-resgate/codigo')
+        ->assertOk()
+        ->json('codigo_teste');
+}
+
 function cadastrarPix(Motorista $motorista): void
 {
     test()->actingAs($motorista->user, 'jwt')
@@ -89,6 +97,7 @@ function cadastrarPix(Motorista $motorista): void
             'pix_tipo' => 'cpf',
             'pix_chave' => '529.982.247-25',
             'documento' => '529.982.247-25',
+            'codigo' => codigoDoSaque($motorista),
         ])
         ->assertCreated();
 }
@@ -102,6 +111,7 @@ it('cadastra a chave pix e ela vira o método principal', function () {
             'pix_tipo' => 'email',
             'pix_chave' => ' Motorista@Exemplo.com ',
             'documento' => '11.222.333/0001-81',
+            'codigo' => codigoDoSaque($motorista),
         ])
         ->assertCreated()
         ->assertJsonPath('data.pix_chave', 'motorista@exemplo.com')
@@ -113,6 +123,25 @@ it('cadastra a chave pix e ela vira o método principal', function () {
         ->getJson('/api/motorista/me/metodos-resgate')
         ->assertOk()
         ->assertJsonCount(1, 'data');
+});
+
+it('trocar a chave pix exige o código enviado por sms', function () {
+    $motorista = motoristaDoSaque();
+    cadastrarPix($motorista);
+
+    $this->actingAs($motorista->user, 'jwt')
+        ->postJson('/api/motorista/me/metodos-resgate', [
+            'tipo' => 'pix',
+            'pix_tipo' => 'email',
+            'pix_chave' => 'golpista@exemplo.com',
+            'documento' => '529.982.247-25',
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['codigo']);
+
+    $this->actingAs($motorista->user, 'jwt')
+        ->getJson('/api/motorista/me/metodos-resgate')
+        ->assertJsonPath('data.0.pix_chave', '52998224725');
 });
 
 it('recusa chave pix ou documento que não batem com o tipo', function () {
@@ -225,6 +254,20 @@ it('saldo da carteira: corrida paga no app credita, em dinheiro desconta a taxa'
         ->getJson('/api/motorista/me/ganhos')
         ->assertJsonPath('saldo', 28.5)
         ->assertJsonPath('ganhos_do_dia', 45);
+});
+
+it('corrida no app sem pagamento confirmado não vira saldo', function () {
+    $motorista = motoristaDoSaque();
+    corridaPaga($motorista, 'pix', 20.00, 1.20);
+    corridaPaga($motorista, 'pix', 50.00, 3.00, 'pendente');
+    corridaPaga($motorista, 'cartao', 40.00, 2.40, 'em_aberto');
+    corridaPaga($motorista, 'cartao', 30.00, 1.80, 'estornado');
+
+    $this->actingAs($motorista->user, 'jwt')
+        ->getJson('/api/motorista/me/carteira')
+        ->assertOk()
+        ->assertJsonPath('saldo', 20)
+        ->assertJsonCount(1, 'movimentos');
 });
 
 it('saca pelo provedor simulado e o saque conclui depois de alguns segundos', function () {

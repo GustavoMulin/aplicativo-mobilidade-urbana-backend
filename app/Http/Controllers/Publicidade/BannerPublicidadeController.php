@@ -3,132 +3,132 @@
 namespace App\Http\Controllers\Publicidade;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreBannerPublicidadeRequest;
 use App\Http\Requests\UpdateBannerPublicidadeRequest;
 use App\Models\BannerPublicidade;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\App;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use RuntimeException;
 
 class BannerPublicidadeController extends Controller
 {
     /**
-     * Display a listing of the resource.
+     * Banners mais novos primeiro. Filtro: cidade_id. Paginação: per_page (até 50).
+     *
+     * @return LengthAwarePaginator<int, BannerPublicidade>
      */
-    public function index()
+    public function index(Request $request): LengthAwarePaginator
     {
-        return BannerPublicidade::query()->paginate();
+        $filtros = $request->validate([
+            'cidade_id' => 'sometimes|integer',
+            'per_page' => 'sometimes|integer|min:1|max:50',
+        ]);
+
+        return BannerPublicidade::query()
+            ->with('cidade:id,nome,uf')
+            ->when(isset($filtros['cidade_id']), fn (Builder $consulta) => $consulta->where('cidade_id', $filtros['cidade_id']))
+            ->latest('id')
+            ->paginate($filtros['per_page'] ?? 15);
     }
 
     /**
-     * Store a newly created resource in storage.
+     * multipart/form-data: cidade_id, titulo e arquivo (imagem).
      */
-    public function store(Request $request): JsonResponse
+    public function store(StoreBannerPublicidadeRequest $request): JsonResponse
     {
-        $request->validate([
-            'titulo' => 'required|string|max:255',
-            'arquivo' => 'required|file|mimes:jpg,jpeg,png|max:12048',
-        ]);
+        /** @var UploadedFile $arquivo */
+        $arquivo = $request->file('arquivo');
 
-        $imagem = $request->file('arquivo');
-
-        /*
-    |--------------------------------------------------------------------------
-    | Dados da imagem
-    |--------------------------------------------------------------------------
-    | Capture antes do move(), pois depois o arquivo temporário deixa
-    | de existir.
-    */
-
-        $originalName = $imagem->getClientOriginalName();
-        $extension = $imagem->extension();
-        $mimeType = $imagem->getMimeType();
-        $size = $imagem->getSize();
-
-        /*
-    |--------------------------------------------------------------------------
-    | Nome do arquivo
-    |--------------------------------------------------------------------------
-    */
-
-        $imageName = time().'_'.$originalName;
-
-        /*
-    |--------------------------------------------------------------------------
-    | Diretório
-    |--------------------------------------------------------------------------
-    */
-
-        $directory = public_path('images');
-
-        if (! is_dir($directory)) {
-            mkdir($directory, 0755, true);
-        }
-
-        /*
-    |--------------------------------------------------------------------------
-    | Salvar imagem
-    |--------------------------------------------------------------------------
-    */
-
-        $imagem->move($directory, $imageName);
-
-        /*
-    |--------------------------------------------------------------------------
-    | URL
-    |--------------------------------------------------------------------------
-    */
-
-        $path = "images/{$imageName}";
-
-        $host = App::environment('local')
-            ? $request->getSchemeAndHttpHost()
-            : 'https://api.producao.app';
-
-        $url = "{$host}/{$path}";
-
-        /*
-    |--------------------------------------------------------------------------
-    | Salvar no banco
-    |--------------------------------------------------------------------------
-    */
-
-        $bannerPublicidade = BannerPublicidade::create([
-            'titulo' => $request->titulo,
-            'name' => $originalName,
-            'type' => $extension,
-            'mime_type' => $mimeType,
-            'size' => $size,
-            'path' => $path,
-            'url' => $url,
+        $banner = BannerPublicidade::create([
+            'cidade_id' => $request->integer('cidade_id'),
+            'titulo' => $request->string('titulo')->trim()->toString(),
+            ...$this->guardarImagem($arquivo),
         ]);
 
         return response()->json([
-            'message' => 'Arquivo enviado com sucesso',
-            'data' => $bannerPublicidade,
+            'message' => 'Banner cadastrado.',
+            'data' => $banner->load('cidade:id,nome,uf'),
         ], 201);
     }
 
-    /**
-     * Display the specified resource.
-     */
-    public function show(BannerPublicidade $bannerPublicidade)
+    public function show(BannerPublicidade $banner): BannerPublicidade
     {
-        //
+        return $banner->load('cidade:id,nome,uf');
     }
 
     /**
-     * Update the specified resource in storage.
+     * Com troca de imagem, envie multipart por POST com _method=PUT.
      */
-    public function update(UpdateBannerPublicidadeRequest $request, BannerPublicidade $bannerPublicidade)
+    public function update(UpdateBannerPublicidadeRequest $request, BannerPublicidade $banner): JsonResponse
     {
-        //
+        $dados = $request->safe()->only(['cidade_id', 'titulo']);
+        $imagemAntiga = null;
+
+        if ($request->hasFile('arquivo')) {
+            /** @var UploadedFile $arquivo */
+            $arquivo = $request->file('arquivo');
+            $imagemAntiga = $banner->path;
+            $dados = [...$dados, ...$this->guardarImagem($arquivo)];
+        }
+
+        $banner->update($dados);
+
+        // a imagem velha só sai depois que o banner já aponta para a nova
+        if ($imagemAntiga !== null && $imagemAntiga !== $banner->path) {
+            Storage::disk($this->disco())->delete($imagemAntiga);
+        }
+
+        return response()->json([
+            'message' => 'Banner atualizado.',
+            'data' => $banner->load('cidade:id,nome,uf'),
+        ]);
     }
 
     /**
-     * Remove the specified resource from storage.
+     * Exclusão reversível (soft delete): a imagem fica guardada.
      */
-    public function destroy(BannerPublicidade $bannerPublicidade)
+    public function destroy(BannerPublicidade $banner): JsonResponse
     {
-        //
+        $banner->delete();
+
+        return response()->json(['message' => 'Banner excluído.']);
+    }
+
+    /**
+     * @return array{name: string, type: string, mime_type: string, size: int, path: string}
+     */
+    private function guardarImagem(UploadedFile $arquivo): array
+    {
+        $extensao = $arquivo->extension();
+
+        // nome gerado pelo servidor: o nome enviado pode trazer caminho ou
+        // caracteres estranhos, e dois envios do mesmo arquivo não colidem
+        $caminho = $arquivo->storeAs(
+            (string) config('publicidade.pasta'),
+            Str::uuid().'.'.$extensao,
+            ['disk' => $this->disco(), 'visibility' => 'public'],
+        );
+
+        if ($caminho === false) {
+            throw new RuntimeException('Não foi possível guardar a imagem do banner.');
+        }
+
+        return [
+            'name' => Str::limit($arquivo->getClientOriginalName(), 250, ''),
+            'type' => $extensao,
+            'mime_type' => (string) $arquivo->getMimeType(),
+            'size' => (int) $arquivo->getSize(),
+            'path' => $caminho,
+        ];
+    }
+
+    private function disco(): string
+    {
+        return (string) config('publicidade.disco');
     }
 }

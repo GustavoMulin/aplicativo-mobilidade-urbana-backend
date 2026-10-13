@@ -29,4 +29,11 @@ return [
     'espera_tolerancia_segundos' => (int) env('PRECIFICACAO_ESPERA_TOLERANCIA_SEGUNDOS', 120),
     'espera_limite_cobranca_segundos' => (int) env('PRECIFICACAO_ESPERA_LIMITE_COBRANCA_SEGUNDOS', 720),
     'espera_cancelamento_automatico_segundos' => (int) env('PRECIFICACAO_ESPERA_CANCELAMENTO_AUTOMATICO_SEGUNDOS', 720),
+
+    // Negocia: oferta do passageiro entre essas frações do preço sugerido
+    'negocia_oferta_minima_fracao' => (float) env('NEGOCIA_OFERTA_MINIMA_FRACAO', 0.7),
+    'negocia_oferta_maxima_fracao' => (float) env('NEGOCIA_OFERTA_MAXIMA_FRACAO', 2.0),
+    'negocia_proposta_validade_segundos' => (int) env('NEGOCIA_PROPOSTA_VALIDADE_SEGUNDOS', 90),
+    // escolhida a proposta no Pix ou cartão, o motorista espera o pagamento por até
+    'negocia_pagamento_limite_segundos' => (int) env('NEGOCIA_PAGAMENTO_LIMITE_SEGUNDOS', 300),
 ];

@@ -210,6 +210,47 @@ it('antes do aceite altera o destino imediatamente e recalcula a oferta', functi
         ->toBe('Destino novo, 123');
 });
 
+it('antes do aceite o novo trajeto reprecifica cada categoria aceita no pedido', function () use ($novoDestino) {
+    [$corrida, $passageiro] = criarCorridaAlteravel('solicitada');
+    $moto = ProdutosCorrida::create(['codigo' => 'moto', 'nome' => 'Moto', 'estrategia_precificacao' => 'normal']);
+    $tarifaMoto = Tarifa::create([
+        'produto_id' => $moto->id,
+        'horario_inicio' => '00:00:00',
+        'horario_fim' => '23:59:59',
+        'dias_semana' => '[1,2,3,4,5,6,7]',
+        'vira_dia' => false,
+        'valor_minimo_corrida' => 5.00,
+        'tarifa_base' => 1.00,
+        'valor_por_km' => 0.90,
+        'valor_por_minuto' => 0.16,
+        'valor_por_minuto_espera' => 0.20,
+        'taxa_plataforma_percentual' => 6.00,
+        'raio_busca_motorista_km' => 5,
+        'ativo' => true,
+    ]);
+    foreach ([[$corrida->produto_id, $corrida->tarifa_id], [$moto->id, $tarifaMoto->id]] as [$produtoId, $tarifaId]) {
+        $corrida->opcoes()->create([
+            'produto_id' => $produtoId,
+            'tarifa_id' => $tarifaId,
+            'valor_passageiro' => 1,
+            'valor_motorista' => 1,
+            'categoria' => [],
+        ]);
+    }
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->postJson("/api/corridas/{$corrida->id}/destino", $novoDestino)
+        ->assertOk();
+
+    // 10 km e 20 min: Pop 2 + 15,50 + 5,60; Moto 1 + 9 + 3,20 (taxa de 6%)
+    $opcoes = $corrida->opcoes()->get()->keyBy('produto_id');
+    expect($opcoes[$corrida->produto_id]->valor_motorista)->toBe(23.10)
+        ->and($opcoes[$corrida->produto_id]->valor_passageiro)->toBe(24.57)
+        ->and($opcoes[$moto->id]->valor_motorista)->toBe(13.20)
+        ->and($opcoes[$moto->id]->valor_passageiro)->toBe(14.04)
+        ->and($opcoes[$moto->id]->categoria['valores']['valor_motorista'])->toBe(13.2);
+});
+
 it('edita o itinerário completo com paradas antes de encontrar motorista', function () {
     [$corrida, $passageiro] = criarCorridaAlteravel('em_busca');
 
@@ -309,8 +350,8 @@ it('não deixa tirar nem reordenar a parada já feita para baratear a viagem', f
 
 it('não passa do limite de paradas pedindo uma de cada vez', function () use ($novoDestino) {
     [$corrida, $passageiro] = criarCorridaAlteravel('em_busca');
-    $corrida->corrida_destinos()->where('tipo', 'destino')->update(['ordem' => 5]);
-    foreach (range(1, 4) as $ordem) {
+    $corrida->corrida_destinos()->where('tipo', 'destino')->update(['ordem' => 3]);
+    foreach (range(1, 2) as $ordem) {
         $corrida->corrida_destinos()->create([
             'nome_local' => "Parada {$ordem}",
             'tipo' => 'parada',
@@ -324,7 +365,59 @@ it('não passa do limite de paradas pedindo uma de cada vez', function () use ($
     $this->actingAs($passageiro->user, 'jwt')
         ->postJson("/api/corridas/{$corrida->id}/destino", [...$novoDestino, 'tipo' => 'parada'])
         ->assertStatus(422)
-        ->assertJsonPath('message', 'A corrida já tem o máximo de 4 paradas.');
+        ->assertJsonPath('message', 'A corrida pode ter no máximo 2 paradas.');
+});
+
+it('não aceita trajeto editado com mais de 2 paradas', function () {
+    [$corrida, $passageiro] = criarCorridaAlteravel('em_busca');
+
+    $itinerario = [
+        ['endereco' => 'Embarque', 'latitude' => -8.76, 'longitude' => -63.90],
+        ['endereco' => 'Parada A', 'latitude' => -8.75, 'longitude' => -63.90],
+        ['endereco' => 'Parada B', 'latitude' => -8.74, 'longitude' => -63.90],
+        ['endereco' => 'Parada C', 'latitude' => -8.73, 'longitude' => -63.90],
+        ['endereco' => 'Destino, 1', 'latitude' => -8.72, 'longitude' => -63.90],
+    ];
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->postJson("/api/corridas/{$corrida->id}/destino", [...$itinerario[4], 'itinerario' => $itinerario])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'A corrida pode ter no máximo 2 paradas.');
+});
+
+it('a parada já feita conta no limite de paradas da corrida', function () {
+    [$corrida, $passageiro] = criarCorridaAlteravel('em_andamento');
+    $corrida->corrida_destinos()->where('tipo', 'destino')->update(['ordem' => 3]);
+    $corrida->corrida_destinos()->create([
+        'nome_local' => 'Parada feita',
+        'tipo' => 'parada',
+        'ordem' => 1,
+        'endereco' => 'Parada feita',
+        'latitude' => -8.75,
+        'longitude' => -63.90,
+        'concluida_em' => now(),
+    ]);
+    $corrida->corrida_destinos()->create([
+        'nome_local' => 'Parada pendente',
+        'tipo' => 'parada',
+        'ordem' => 2,
+        'endereco' => 'Parada pendente',
+        'latitude' => -8.745,
+        'longitude' => -63.90,
+    ]);
+
+    $itinerario = [
+        ['endereco' => 'Embarque', 'latitude' => -8.76, 'longitude' => -63.90],
+        ['endereco' => 'Parada feita', 'latitude' => -8.75, 'longitude' => -63.90],
+        ['endereco' => 'Parada pendente', 'latitude' => -8.745, 'longitude' => -63.90],
+        ['endereco' => 'Parada nova', 'latitude' => -8.73, 'longitude' => -63.90],
+        ['endereco' => 'Destino antigo', 'latitude' => -8.74, 'longitude' => -63.90],
+    ];
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->postJson("/api/corridas/{$corrida->id}/destino", [...$itinerario[4], 'itinerario' => $itinerario])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'A corrida pode ter no máximo 2 paradas.');
 });
 
 it('limita quantas vezes o trajeto pode ser alterado na mesma corrida', function () use ($novoDestino) {
