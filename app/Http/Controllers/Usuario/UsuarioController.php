@@ -3,20 +3,21 @@
 namespace App\Http\Controllers\Usuario;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Auth\CadastroUsuarioRequest;
 use App\Models\AvaliacoesCorrida;
 use App\Models\Corrida;
-use App\Models\Motorista;
 use App\Models\Passageiro;
 use App\Models\User;
+use App\Services\PerfilUsuarioService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Image;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use PHPOpenSourceSaver\JWTAuth\JWTGuard;
@@ -49,13 +50,22 @@ class UsuarioController extends Controller
         return $query->orderBy('id', 'desc')->paginate(($dados['rowsPerPage'] ?? 15) ?: 15);
     }
 
-    public function usuarioLogado(): ?User
+    public function usuarioLogado(Request $request, PerfilUsuarioService $perfis): JsonResponse
     {
         /** @var ?User $user */
         $user = Auth::user();
 
         if ($user === null) {
-            return null;
+            return response()->json(['message' => 'Não autenticado.'], 401);
+        }
+
+        $perfil = $perfis->solicitado($request);
+        $registroPerfil = $perfis->garantir($user, $perfil);
+
+        if ($perfis->indisponivel($registroPerfil)) {
+            return response()->json([
+                'message' => 'Este perfil está indisponível. Entre em contato com o suporte.',
+            ], 403);
         }
 
         // nota que os motoristas deram ao passageiro (o menu do app mostra)
@@ -65,43 +75,56 @@ class UsuarioController extends Controller
             ->where('avaliacoes_corridas.tipo_usuario', 'motorista')
             ->where('corridas.passageiro_id', $passageiroId)
             ->avg('avaliacoes_corridas.nota');
-        $user->setAttribute('nota_passageiro', $nota === null ? null : round((float) $nota, 2));
+        $dados = $perfis->dados($user, $perfil, $registroPerfil);
+        $dados['nota_passageiro'] = $nota === null ? null : round((float) $nota, 2);
         // o perfil do passageiro mostra quantas corridas ele já fez
-        $user->setAttribute('corridas_passageiro', $passageiroId === null ? 0 : Corrida::where('passageiro_id', $passageiroId)
+        $dados['corridas_passageiro'] = $passageiroId === null ? 0 : Corrida::where('passageiro_id', $passageiroId)
             ->where('status_corrida', 'finalizada')
-            ->count());
+            ->count();
 
-        return $user;
+        return response()->json($dados);
     }
 
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request): JsonResponse
+    public function store(Request $request, PerfilUsuarioService $perfis): JsonResponse
     {
         $dados = $request->validate([
-            'name' => 'required|string|min:3|max:255',
-            'cpf' => 'required|digits:11|unique:users,cpf',
-            'data_nascimento' => 'required|date_format:Y-m-d|before_or_equal:today',
-        ], ['cpf.unique' => 'Este CPF já está cadastrado, inclusive entre os usuários arquivados.']);
-        $user = User::create($dados);
+            ...$this->regrasCadastro(),
+        ], $this->mensagensCadastro());
 
-        return response()->json(['user' => $user, 'message' => 'Usuário cadastrado com sucesso.'], 201);
+        $user = User::create([
+            'name' => $dados['name'],
+            'data_nascimento' => $dados['data_nascimento'],
+            'telefone' => $dados['telefone'] ?? null,
+            'cpf' => $dados['cpf'],
+            'email' => $dados['email'],
+            'status' => 'ativo',
+            'password' => bcrypt($dados['password']),
+        ]);
+
+        $perfil = PerfilUsuarioService::PASSAGEIRO;
+        $registroPerfil = $perfis->garantir($user, $perfil);
+        $this->criarImagemPerfil($request, $registroPerfil);
+
+        // gera token JWT
+        /** @var JWTGuard $guard */
+        $guard = auth('jwt');
+        $token = $guard->claims(['perfil' => $perfil])->login($user);
+
+        return response()->json([
+            'user' => $perfis->dados($user, $perfil, $registroPerfil),
+            'token' => $token,
+        ], 201);
     }
 
-    public function register(Request $request): JsonResponse
+    public function register(CadastroUsuarioRequest $request, PerfilUsuarioService $perfis): JsonResponse
     {
-        $ehMotorista = $request->input('perfil') === 'motorista';
+        $dados = $request->validated();
+        $perfil = $dados['perfil'];
 
-        $dados = $request->validate(
-            [
-                ...$this->regrasCadastro($ehMotorista),
-                'perfil' => 'nullable|in:passageiro,motorista',
-            ],
-            $this->mensagensCadastro()
-        );
-
-        $user = DB::transaction(function () use ($dados, $ehMotorista) {
+        [$user, $registroPerfil] = DB::transaction(function () use ($dados, $perfil, $perfis): array {
             $user = User::create([
                 'name' => $dados['name'],
                 'data_nascimento' => $dados['data_nascimento'],
@@ -112,35 +135,18 @@ class UsuarioController extends Controller
                 'password' => bcrypt($dados['password']),
             ]);
 
-            if ($ehMotorista) {
-                // nasce pendente e sem CNH: os documentos vêm no passo
-                // seguinte e a liberação é feita pelo painel de gestão
-                Motorista::create([
-                    'user_id' => $user->id,
-                    'status' => 'pendente',
-                ]);
-            }
-
-            return $user;
+            return [$user, $perfis->garantir($user, $perfil)];
         });
 
-        $this->criarImagemPerfil($request, $user);
+        $this->criarImagemPerfil($request, $registroPerfil);
 
         // gera token JWT
         /** @var JWTGuard $guard */
         $guard = auth('jwt');
-        $token = $guard->login($user);
+        $token = $guard->claims(['perfil' => $perfil])->login($user);
 
         return response()->json([
-            'user' => [
-                'id' => $user->id,
-                'name' => $user->name,
-                'email' => $user->email,
-                'telefone' => $user->telefone,
-                'cpf' => $user->cpf,
-                'data_nascimento' => $user->data_nascimento,
-                'motorista' => $ehMotorista,
-            ],
+            'user' => $perfis->dados($user, $perfil, $registroPerfil),
             'token' => $token,
         ], 201);
     }
@@ -210,7 +216,7 @@ class UsuarioController extends Controller
         ];
     }
 
-    private function criarImagemPerfil(Request $request, User $user): JsonResponse
+    private function criarImagemPerfil(Request $request, Model $perfil): void
     {
         $image = $request->file('image', null);
 
@@ -225,38 +231,29 @@ class UsuarioController extends Controller
                 : rtrim((string) config('app.url'), '/');
             $extension = $image->extension();
             $imageName = Str::uuid().'.'.$extension;
-            $thumbnail = Str::uuid().'_thumbnail.'.$extension;
 
             File::ensureDirectoryExists(public_path('images'));
 
-            File::put(
-                public_path('images/').$thumbnail,
-                Image::fromUpload($image)->resize(100, 100)->toBytes(),
-            );
-
             $image->move(public_path('images'), $imageName);
-            $user->foto = $host.'/images/'.$imageName;
-            $user->foto_thumbnail = $host.'/images/'.$thumbnail;
-            $user->saveOrFail();
+            $perfil->setAttribute('foto', $host.'/images/'.$imageName);
+            $perfil->saveOrFail();
         }
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Registro realizado com sucesso',
-            'data' => $user,
-        ], 201);
     }
 
-    public function removerFotoPerfil(string $id): JsonResponse
-    {
-        $user = User::findOrFail($id);
-        $foto = $user->foto;
-        $thumbnail = $user->foto_thumbnail;
-        $user->foto = null;
-        $user->foto_thumbnail = null;
-        $user->saveOrFail();
+    public function removerFotoPerfil(
+        Request $request,
+        string $id,
+        PerfilUsuarioService $perfis,
+    ): JsonResponse {
+        /** @var User $user */
+        $user = $request->user();
+        abort_unless((string) $user->id === $id, 403, 'Você só pode alterar a foto da própria conta.');
+        $perfil = $perfis->garantir($user, $perfis->solicitado($request));
+        abort_if($perfis->indisponivel($perfil), 403, 'Este perfil está indisponível.');
+        $foto = $perfil->getAttribute('foto');
+        $perfil->setAttribute('foto', null);
+        $perfil->saveOrFail();
         $this->excluirImagemPerfil($foto);
-        $this->excluirImagemPerfil($thumbnail);
 
         return response()->json([
             'success' => true,
@@ -264,20 +261,24 @@ class UsuarioController extends Controller
         ]);
     }
 
-    public function alterarFotoPerfil(Request $request, string $id): JsonResponse
-    {
+    public function alterarFotoPerfil(
+        Request $request,
+        string $id,
+        PerfilUsuarioService $perfis,
+    ): JsonResponse {
         $request->validate(['image' => 'required|image|mimes:jpeg,png,jpg,webp|max:5120']);
-        $user = User::findOrFail($id);
-        $fotoAnterior = $user->foto;
-        $thumbnailAnterior = $user->foto_thumbnail;
-        $this->criarImagemPerfil($request, $user);
+        /** @var User $user */
+        $user = $request->user();
+        abort_unless((string) $user->id === $id, 403, 'Você só pode alterar a foto da própria conta.');
+        $perfil = $perfis->garantir($user, $perfis->solicitado($request));
+        abort_if($perfis->indisponivel($perfil), 403, 'Este perfil está indisponível.');
+        $fotoAnterior = $perfil->getAttribute('foto');
+        $this->criarImagemPerfil($request, $perfil);
         $this->excluirImagemPerfil($fotoAnterior);
-        $this->excluirImagemPerfil($thumbnailAnterior);
 
         return response()->json([
             'user' => [
-                'foto' => $user->foto,
-                'foto_thumbnail' => $user->foto_thumbnail,
+                'foto' => $perfil->getAttribute('foto'),
             ],
             'success' => true,
             'message' => 'Foto alterada com sucesso!',

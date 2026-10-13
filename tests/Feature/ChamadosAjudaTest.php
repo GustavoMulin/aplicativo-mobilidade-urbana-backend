@@ -18,8 +18,6 @@ function passageiroAjuda(string $cpf = '52998224725'): Passageiro
         'cpf' => $cpf,
         'data_nascimento' => '1990-01-01',
         'email' => "ajuda-$id@example.test",
-        'foto' => null,
-        'foto_thumbnail' => null,
         'status' => 'ativo',
         'password' => 'senha-de-teste',
     ]);

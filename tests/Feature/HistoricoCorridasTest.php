@@ -21,8 +21,6 @@ function criarUsuarioHistorico(string $papel): User
         'cpf' => substr(preg_replace('/\D/', '', $identificador).'00000000000', 0, 11),
         'data_nascimento' => '1990-01-01',
         'email' => "$papel-$identificador@example.test",
-        'foto' => null,
-        'foto_thumbnail' => null,
         'status' => 'ativo',
         'password' => 'senha-de-teste',
     ]);

@@ -26,8 +26,6 @@ function passageiroPix(string $cpf = '52998224725'): Passageiro
         'cpf' => $cpf,
         'data_nascimento' => '1990-01-01',
         'email' => "pix-$id@example.test",
-        'foto' => null,
-        'foto_thumbnail' => null,
         'status' => 'ativo',
         'password' => 'senha-de-teste',
     ]);

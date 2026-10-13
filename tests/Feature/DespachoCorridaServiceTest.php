@@ -33,8 +33,6 @@ function criarUsuarioDespacho(string $prefixo): User
         'cpf' => substr(preg_replace('/\D/', '', $sufixo).'00000000000', 0, 11),
         'data_nascimento' => '1990-01-01',
         'email' => "$prefixo-$sufixo@example.test",
-        'foto' => null,
-        'foto_thumbnail' => null,
         'status' => 'ativo',
         'password' => 'senha-de-teste',
     ]);
@@ -622,7 +620,8 @@ it('entrega ao motorista os dados do passageiro correto e os pontos da rota', fu
     [$motorista] = criarMotoristaDespacho(true);
     $motorista->user->update(['name' => 'João dos Santos']);
     $passageiro = criarPassageiroDespacho();
-    $passageiro->user->update(['name' => 'Maria da Silva', 'foto' => 'https://example.test/maria.jpg']);
+    $passageiro->user->update(['name' => 'Maria da Silva']);
+    $passageiro->update(['foto' => 'https://example.test/maria.jpg']);
     $corrida = criarCorridaDespacho($passageiro);
     app(DespachoCorridaService::class)->aceitar($motorista, $corrida->id);
     $this->mock(EstimarChegadaService::class)
