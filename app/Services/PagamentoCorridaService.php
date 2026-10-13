@@ -507,6 +507,7 @@ class PagamentoCorridaService
             $texto = number_format($valor, 2, ',', '.');
             $this->notificarUsuario->executar(
                 (int) $userId,
+                'passageiro',
                 'Pagamento pendente',
                 "Falta pagar R$ {$texto} da corrida {$corrida->codigo_corrida}. Pague para pedir uma nova corrida."
             );
@@ -520,6 +521,7 @@ class PagamentoCorridaService
         if ($userId !== null) {
             $this->notificarUsuario->executar(
                 (int) $userId,
+                'motorista',
                 'Pagamento recebido',
                 "O passageiro quitou o valor pendente da corrida {$corrida->codigo_corrida}."
             );

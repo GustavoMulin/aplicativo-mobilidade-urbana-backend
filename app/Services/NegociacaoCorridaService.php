@@ -137,6 +137,7 @@ class NegociacaoCorridaService
         if ($passageiroUserId !== null) {
             $this->notificarUsuario->executar(
                 $passageiroUserId,
+                'passageiro',
                 'Nova proposta no Negocia',
                 'Um motorista propôs R$ '.number_format((float) $proposta->valor_passageiro, 2, ',', '.').'. Abra o app para escolher.'
             );
@@ -331,6 +332,7 @@ class NegociacaoCorridaService
         if ($motoristaUserId !== null) {
             $this->notificarUsuario->executar(
                 $motoristaUserId,
+                'motorista',
                 'O passageiro escolheu sua proposta',
                 $corrida->status_corrida === 'aguardando_pagamento'
                     ? 'Aguarde a confirmação do pagamento para ir ao embarque.'

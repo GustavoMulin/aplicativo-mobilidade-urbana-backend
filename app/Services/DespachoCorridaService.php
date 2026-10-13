@@ -466,10 +466,10 @@ class DespachoCorridaService
         $ganho = number_format((float) $corrida->corrida_financeiro?->valor_liquido_motorista, 2, ',', '.');
         $pago = number_format((float) $corrida->corrida_financeiro?->valor_pago_passageiro, 2, ',', '.');
 
-        $this->notificarUsuario->executar($userIdMotorista, 'Corrida finalizada', "Você recebe R$ {$ganho} por esta corrida.");
+        $this->notificarUsuario->executar($userIdMotorista, 'motorista', 'Corrida finalizada', "Você recebe R$ {$ganho} por esta corrida.");
 
         if ($corrida->passageiro?->user_id !== null) {
-            $this->notificarUsuario->executar($corrida->passageiro->user_id, 'Viagem concluída', "Valor da corrida: R$ {$pago}.");
+            $this->notificarUsuario->executar($corrida->passageiro->user_id, 'passageiro', 'Viagem concluída', "Valor da corrida: R$ {$pago}.");
         }
     }
 
