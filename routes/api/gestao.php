@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Auth\GestorAutenticacaoController;
 use App\Http\Controllers\Corrida\CorridaController;
+use App\Http\Controllers\Gestao\FotoPerfilController;
 use App\Http\Controllers\Gestor\GestorController;
 use App\Http\Controllers\Motorista\MotoristaController;
 use App\Http\Controllers\Motorista\MotoristaDocumentoController;
@@ -17,6 +18,11 @@ Route::prefix('gestao')->name('gestao.')->group(function () {
     Route::middleware(['auth:gestores', 'gestor'])->group(function () {
         Route::get('usuario-logado', [GestorAutenticacaoController::class, 'usuarioLogado']);
         Route::post('auth/logout', [GestorAutenticacaoController::class, 'logout'])->name('auth.logout');
+
+        foreach (['motorista' => 'motoristas', 'passageiro' => 'passageiros', 'gestor' => 'gestores'] as $tipo => $recurso) {
+            Route::post($recurso.'/{perfil}/foto', [FotoPerfilController::class, 'atualizar'])
+                ->whereNumber('perfil')->defaults('tipo', $tipo);
+        }
 
         Route::get('gestores/arquivados', [GestorController::class, 'arquivados']);
         Route::post('gestores/{gestor}/restaurar', [GestorController::class, 'restaurar'])->whereNumber('gestor');

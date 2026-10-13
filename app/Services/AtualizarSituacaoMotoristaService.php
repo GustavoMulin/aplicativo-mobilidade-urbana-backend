@@ -42,14 +42,6 @@ class AtualizarSituacaoMotoristaService
 
     private function calcular(Motorista $motorista): string
     {
-        $documentos = app(DocumentosMotoristaService::class)->ultimos($motorista);
-        if ($documentos->isEmpty()) {
-            return 'pendente';
-        }
-        if ($documentos->contains(fn ($d) => $d->status === 'reprovado')) {
-            return 'reprovado';
-        }
-
-        return $this->documentosQueFaltam($motorista) === [] ? 'aprovado' : 'em_analise';
+        return $this->documentosQueFaltam($motorista) === [] ? 'ativo' : 'pendente';
     }
 }

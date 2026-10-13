@@ -11,7 +11,10 @@ return new class extends Migration
     {
         $this->garantirCredenciaisNoUsuario();
         $this->garantirDadosDosPerfis();
-        $this->migrarDadosExistentes();
+        DB::transaction(function (): void {
+            $this->validarCredenciaisUnicas();
+            $this->migrarDadosExistentes();
+        });
         $this->removerCredenciaisDuplicadasDosPerfis();
     }
 
@@ -57,6 +60,53 @@ return new class extends Migration
         });
     }
 
+    private function credenciaisParaMigrar(object $usuario, ?object $origem): array
+    {
+        $dados = [];
+        foreach (['telefone', 'email', 'email_verified_at', 'password', 'remember_token'] as $campo) {
+            if (($usuario->{$campo} ?? null) === null && ($origem->{$campo} ?? null) !== null) {
+                $dados[$campo] = $origem->{$campo};
+            }
+        }
+
+        return $dados;
+    }
+
+    private function validarCredenciaisUnicas(): void
+    {
+        $ocupados = ['telefone' => [], 'email' => []];
+        // Reserva primeiro os valores já existentes, inclusive de usuários arquivados.
+        DB::table('users')->select('id', 'telefone', 'email')->chunkById(100, function ($usuarios) use (&$ocupados): void {
+            foreach ($usuarios as $usuario) {
+                foreach (['telefone', 'email'] as $campo) {
+                    if ($usuario->{$campo} !== null) {
+                        $chave = mb_strtolower(rtrim((string) $usuario->{$campo}));
+                        $ocupados[$campo][$chave] = (int) $usuario->id;
+                    }
+                }
+            }
+        });
+
+        DB::table('users')->chunkById(100, function ($usuarios) use (&$ocupados): void {
+            foreach ($usuarios as $usuario) {
+                $passageiro = DB::table('passageiros')->where('user_id', $usuario->id)->first();
+                $motorista = DB::table('motoristas')->where('user_id', $usuario->id)->first();
+                $dados = $this->credenciaisParaMigrar($usuario, $passageiro ?? $motorista);
+                foreach (['telefone', 'email'] as $campo) {
+                    if (! array_key_exists($campo, $dados)) {
+                        continue;
+                    }
+                    $chave = mb_strtolower(rtrim((string) $dados[$campo]));
+                    $dono = $ocupados[$campo][$chave] ?? null;
+                    if ($dono !== null && $dono !== (int) $usuario->id) {
+                        throw new RuntimeException("Conflito de {$campo} entre os usuários {$dono} e {$usuario->id}. Corrija os dados de origem antes de executar esta migration.");
+                    }
+                    $ocupados[$campo][$chave] = (int) $usuario->id;
+                }
+            }
+        });
+    }
+
     private function migrarDadosExistentes(): void
     {
         DB::table('users')->orderBy('id')->chunkById(100, function ($usuarios): void {
@@ -65,12 +115,7 @@ return new class extends Migration
                 $motorista = DB::table('motoristas')->where('user_id', $usuario->id)->first();
                 $origemCredenciais = $passageiro ?? $motorista;
 
-                $dadosUsuario = [];
-                foreach (['telefone', 'email', 'email_verified_at', 'password', 'remember_token'] as $campo) {
-                    if (($usuario->{$campo} ?? null) === null && ($origemCredenciais->{$campo} ?? null) !== null) {
-                        $dadosUsuario[$campo] = $origemCredenciais->{$campo};
-                    }
-                }
+                $dadosUsuario = $this->credenciaisParaMigrar($usuario, $origemCredenciais);
 
                 if ($dadosUsuario !== []) {
                     DB::table('users')->where('id', $usuario->id)->update($dadosUsuario);
