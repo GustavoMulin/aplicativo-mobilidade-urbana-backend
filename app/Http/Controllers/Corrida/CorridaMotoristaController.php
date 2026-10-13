@@ -238,7 +238,7 @@ class CorridaMotoristaController extends Controller
     {
         $motorista = Motorista::where('user_id', $request->user()->id)->first();
 
-        if ($motorista === null || $motorista->status !== MotoristaCadastroController::APROVADO) {
+        if ($motorista === null || $motorista->status !== MotoristaCadastroController::ATIVO) {
             $this->situacaoDoCadastro = $motorista->status
                 ?? MotoristaCadastroController::SEM_CADASTRO;
 

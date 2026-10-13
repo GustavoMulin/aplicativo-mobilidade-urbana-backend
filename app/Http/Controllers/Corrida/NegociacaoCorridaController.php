@@ -30,7 +30,7 @@ class NegociacaoCorridaController extends Controller
 
         $motorista = Motorista::where('user_id', $request->user()->id)->first();
 
-        if ($motorista === null || $motorista->status !== MotoristaCadastroController::APROVADO) {
+        if ($motorista === null || $motorista->status !== MotoristaCadastroController::ATIVO) {
             return response()->json(['message' => 'Seu cadastro de motorista ainda não foi aprovado.'], 403);
         }
 
