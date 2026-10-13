@@ -15,6 +15,7 @@ use Illuminate\Database\Eloquent\Model;
  * @property string|null $grupo
  * @property string|null $tipo_veiculo
  * @property string|null $requisito_veiculo
+ * @property bool $prioritario chamada vai antes das outras (Expresso)
  * @property int|null $ordem
  */
 class ProdutosCorrida extends Model
@@ -29,8 +30,17 @@ class ProdutosCorrida extends Model
         'grupo',
         'tipo_veiculo',
         'requisito_veiculo',
+        'prioritario',
         'ordem',
     ];
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return ['prioritario' => 'boolean'];
+    }
 
     public function atendidoPor(Veiculo $veiculo): bool
     {

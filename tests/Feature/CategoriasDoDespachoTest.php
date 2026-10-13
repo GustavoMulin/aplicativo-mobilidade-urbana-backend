@@ -8,10 +8,12 @@ use App\Models\MotoristaVeiculo;
 use App\Models\Passageiro;
 use App\Models\ProdutosCorrida;
 use App\Models\StatusBusca;
+use App\Models\Tarifa;
 use App\Models\User;
 use App\Models\Veiculo;
 use App\Services\DespachoCorridaService;
 use App\Services\PagamentoCorridaService;
+use Database\Seeders\PrecificacaoSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
@@ -340,4 +342,41 @@ it('o motorista não fica online com o veículo de outro', function () {
     $eletrica = catPedir(catPassageiro(), ['carro_eletrico' => 14.0]);
 
     expect(catOfertadas($espertinho))->not->toContain($eletrica->id);
+});
+
+it('a chamada Expresso aparece antes das outras para o motorista', function () {
+    ProdutosCorrida::create([
+        'codigo' => 'expresso',
+        'nome' => 'Expresso · Carro',
+        'estrategia_precificacao' => 'normal',
+        'grupo' => 'expresso',
+        'tipo_veiculo' => 'carro',
+        'requisito_veiculo' => null,
+        'prioritario' => true,
+        'ordem' => 9,
+    ]);
+    $pop = catPedir(catPassageiro(), ['pop' => 12.0]);
+    $expresso = catPedir(catPassageiro(), ['expresso' => 14.5]);
+
+    $ofertas = app(DespachoCorridaService::class)->ofertasPara(catMotorista('carro'));
+
+    expect($ofertas->pluck('corrida_id')->all())->toBe([$expresso->id, $pop->id])
+        ->and($ofertas->first()['prioritaria'])->toBeTrue()
+        ->and($ofertas->last()['prioritaria'])->toBeFalse()
+        // moto não atende o Expresso
+        ->and(catOfertadas(catMotorista('moto')))->toBe([]);
+});
+
+it('o seeder cria o Expresso logo depois do Normal, com raio de busca menor', function () {
+    ProdutosCorrida::query()->delete();
+    $this->seed(PrecificacaoSeeder::class);
+
+    $ordem = ProdutosCorrida::orderBy('ordem')->pluck('codigo')->all();
+    $expresso = ProdutosCorrida::where('codigo', 'expresso')->firstOrFail();
+    $raioExpresso = Tarifa::where('produto_id', $expresso->id)->value('raio_busca_motorista_km');
+    $raioPop = Tarifa::where('produto_id', ProdutosCorrida::where('codigo', 'pop')->value('id'))->value('raio_busca_motorista_km');
+
+    expect(array_slice($ordem, 0, 3))->toBe(['negocia', 'pop', 'expresso'])
+        ->and($expresso->prioritario)->toBeTrue()
+        ->and((float) $raioExpresso)->toBeLessThan((float) $raioPop);
 });

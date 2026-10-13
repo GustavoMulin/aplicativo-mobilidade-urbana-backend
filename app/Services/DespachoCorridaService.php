@@ -162,7 +162,7 @@ class DespachoCorridaService
         $corridas = Corrida::where('status_corrida', 'solicitada')
             ->whereNull('motorista_id')
             ->where(fn (Builder $consulta) => $this->queOVeiculoAtende($consulta, $veiculo))
-            ->with(['corrida_destinos', 'corrida_financeiro', 'opcoes.produto'])
+            ->with(['corrida_destinos', 'corrida_financeiro', 'opcoes.produto', 'produto'])
             ->orderBy('tempo_solicitacao')
             ->get();
 
@@ -174,10 +174,14 @@ class DespachoCorridaService
         $reputacoes = $this->reputacoesDosPassageiros($corridas);
         $raios = $this->raiosDasTarifas($corridas);
 
+        // Expresso (prioritário) primeiro; depois a mais perto
         $ofertas = $corridas
             ->map(fn (Corrida $corrida) => $this->montarOferta($corrida, $status, $reputacoes, $raios, $veiculo))
             ->filter()
-            ->sortBy('distancia_ate_origem_km')
+            ->sortBy([
+                fn (array $a, array $b) => $b['prioritaria'] <=> $a['prioritaria'],
+                fn (array $a, array $b) => $a['distancia_ate_origem_km'] <=> $b['distancia_ate_origem_km'],
+            ])
             ->values();
 
         // base da taxa de aceitação: cada corrida conta uma vez por motorista
@@ -679,6 +683,7 @@ class DespachoCorridaService
             'distancia_corrida_km' => (float) $corrida->distancia_total,
             'valor_motorista' => $opcao->valor_motorista ?? (float) ($corrida->corrida_financeiro->valor_motorista ?? 0),
             'categoria' => $opcao?->produto?->nome,
+            'prioritaria' => (bool) ($opcao->produto->prioritario ?? $corrida->produto->prioritario ?? false),
             'metodo_pagamento' => $corrida->metodo_pagamento,
             'negociavel' => $corrida->status_negociacao === 'em_negociacao',
             'minha_proposta' => $this->minhaProposta($corrida),
