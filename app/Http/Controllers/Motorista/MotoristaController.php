@@ -10,6 +10,7 @@ use App\Models\MotoristaVeiculo;
 use App\Models\StatusBusca;
 use App\Models\Veiculo;
 use App\Services\AtualizarSituacaoMotoristaService;
+use App\Services\CadastrarPerfilUsuarioService;
 use App\Services\CarteiraMotoristaService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -233,25 +234,13 @@ class MotoristaController extends Controller
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request): JsonResponse
+    public function store(Request $request, CadastrarPerfilUsuarioService $cadastro): JsonResponse
     {
-        $dados = $request->validate([
-            'user_id' => 'required|integer|exists:users,id|unique:motoristas,user_id',
-            'numero_registro' => 'nullable|string|max:20',
-            'cnh_categoria' => 'nullable|string',
-            'cnh_expiracao' => 'nullable|date',
-            'ear' => 'nullable|boolean',
-            'observacao' => 'nullable|string|max:5000',
-        ]);
-
-        $motorista = Motorista::create([
-            ...$dados,
-            'status' => 'pendente',
-        ]);
+        $motorista = $cadastro->executar($request, 'motorista');
 
         return response()->json([
             'success' => true,
-            'message' => 'Registro realizado com sucesso',
+            'message' => 'Motorista cadastrado com sucesso.',
             'data' => $motorista,
         ], 201);
     }

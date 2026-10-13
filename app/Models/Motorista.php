@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Database\Factories\MotoristaFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
+use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -11,6 +12,10 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 #[Fillable([
     'user_id',
+    'email',
+    'telefone',
+    'password',
+    'foto',
     'nome',
     'cpf',
     'data_nascimento',
@@ -24,6 +29,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
     'status',
 ])]
 
+#[Hidden(['password', 'remember_token'])]
 class Motorista extends Model
 {
     /** @use HasFactory<MotoristaFactory> */
@@ -37,6 +43,8 @@ class Motorista extends Model
     protected function casts(): array
     {
         return [
+            'password' => 'hashed',
+            'email_verified_at' => 'datetime',
             'data_nascimento' => 'date:Y-m-d',
             'primeira_habilitacao' => 'date:Y-m-d',
             'data_emissao' => 'date:Y-m-d',

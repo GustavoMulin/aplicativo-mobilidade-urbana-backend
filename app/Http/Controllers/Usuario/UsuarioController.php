@@ -80,35 +80,13 @@ class UsuarioController extends Controller
     public function store(Request $request): JsonResponse
     {
         $dados = $request->validate([
-            ...$this->regrasCadastro(),
-        ], $this->mensagensCadastro());
+            'name' => 'required|string|min:3|max:255',
+            'cpf' => 'required|digits:11|unique:users,cpf',
+            'data_nascimento' => 'required|date_format:Y-m-d|before_or_equal:today',
+        ], ['cpf.unique' => 'Este CPF já está cadastrado, inclusive entre os usuários arquivados.']);
+        $user = User::create($dados);
 
-        $user = User::create([
-            'name' => $dados['name'],
-            'data_nascimento' => $dados['data_nascimento'],
-            'telefone' => $dados['telefone'] ?? null,
-            'cpf' => $dados['cpf'],
-            'email' => $dados['email'],
-            'foto' => null,
-            'status' => 'ativo',
-            'password' => bcrypt($dados['password']),
-        ]);
-
-        $this->criarImagemPerfil($request, $user);
-
-        // gera token JWT
-        /** @var JWTGuard $guard */
-        $guard = auth('jwt');
-        $token = $guard->login($user);
-
-        return response()->json([
-            'user' => [
-                'id' => $user->id,
-                'name' => $user->name,
-                'email' => $user->email,
-            ],
-            'token' => $token,
-        ], 201);
+        return response()->json(['user' => $user, 'message' => 'Usuário cadastrado com sucesso.'], 201);
     }
 
     public function register(Request $request): JsonResponse
