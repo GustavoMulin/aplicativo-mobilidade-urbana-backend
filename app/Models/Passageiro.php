@@ -16,7 +16,15 @@ class Passageiro extends Model
     protected $fillable = [
         'user_id',
         'media_avaliacao',
+        'email', 'telefone', 'password', 'foto', 'status',
     ];
+
+    protected $hidden = ['password', 'remember_token'];
+
+    protected function casts(): array
+    {
+        return ['password' => 'hashed', 'email_verified_at' => 'datetime'];
+    }
 
     /**
      * @return BelongsTo<User, $this>
