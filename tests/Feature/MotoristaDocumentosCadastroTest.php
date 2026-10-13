@@ -19,7 +19,7 @@ it('mostra os quatro documentos exigidos antes do primeiro envio', function () {
 });
 
 it('aceita PDF e imagem do próprio motorista e mostra só o envio mais recente', function () {
-    Storage::fake('local');
+    Storage::fake('motorista_documentos_anexos');
     $usuario = User::factory()->create();
 
     $this->actingAs($usuario, 'jwt')->post('/api/motorista/cadastro/documentos', [
@@ -30,6 +30,7 @@ it('aceita PDF e imagem do próprio motorista e mostra só o envio mais recente'
     $this->actingAs($usuario, 'jwt')->post('/api/motorista/cadastro/documentos', [
         'tipo_documento' => 'cnh',
         'arquivo' => UploadedFile::fake()->create('nova-cnh.png', 100, 'image/png'),
+        'arquivo_verso' => UploadedFile::fake()->create('nova-cnh-verso.png', 100, 'image/png'),
     ], ['Accept' => 'application/json'])->assertCreated();
 
     $motorista = Motorista::where('user_id', $usuario->id)->firstOrFail();
@@ -37,8 +38,8 @@ it('aceita PDF e imagem do próprio motorista e mostra só o envio mais recente'
     expect($documentos)->toHaveCount(2)
         ->and($documentos[0]->path)->not->toBe($documentos[1]->path)
         ->and($documentos[1]->name)->toBe('nova-cnh.png');
-    Storage::disk('local')->assertExists($documentos[0]->path);
-    Storage::disk('local')->assertExists($documentos[1]->path);
+    Storage::disk('motorista_documentos_anexos')->assertExists(basename($documentos[0]->path));
+    Storage::disk('motorista_documentos_anexos')->assertExists(basename($documentos[1]->path));
 
     $this->actingAs($usuario, 'jwt')->getJson('/api/motorista/cadastro')
         ->assertOk()
@@ -48,7 +49,7 @@ it('aceita PDF e imagem do próprio motorista e mostra só o envio mais recente'
 });
 
 it('recusa tipo desconhecido e arquivo fora dos formatos permitidos', function () {
-    Storage::fake('local');
+    Storage::fake('motorista_documentos_anexos');
     $usuario = User::factory()->create();
 
     $this->actingAs($usuario, 'jwt')->post('/api/motorista/cadastro/documentos', [
@@ -73,7 +74,7 @@ it('recusa tipo desconhecido e arquivo fora dos formatos permitidos', function (
 });
 
 it('não exibe documentos de outra conta no cadastro', function () {
-    Storage::fake('local');
+    Storage::fake('motorista_documentos_anexos');
     $primeiro = User::factory()->create();
     $segundo = User::factory()->create();
 
@@ -97,7 +98,7 @@ it('atalho de desenvolvimento aprova o motorista sem passar pela análise', func
 
     $motorista = Motorista::where('user_id', $usuario->id)->firstOrFail();
     expect($motorista->status)->toBe('aprovado')
-        ->and($motorista->cnh_numero)->not->toBeNull();
+        ->and($motorista->numero_registro)->not->toBeNull();
 
     $documentos = MotoristaDocumento::where('motorista_id', $motorista->id)->get();
     expect($documentos)->toHaveCount(4)
@@ -115,7 +116,7 @@ it('atalho de desenvolvimento não duplica CNH já preenchida', function () {
     $motorista = Motorista::create([
         'user_id' => $usuario->id,
         'status' => 'pendente',
-        'cnh_numero' => '11122233344',
+        'numero_registro' => '11122233344',
         'cnh_categoria' => 'A',
         'cnh_expiracao' => now()->addYear()->toDateString(),
         'ear' => true,
@@ -125,5 +126,31 @@ it('atalho de desenvolvimento não duplica CNH já preenchida', function () {
         ->postJson('/api/motorista/cadastro/aprovar-dev')
         ->assertOk();
 
-    expect($motorista->fresh()->cnh_numero)->toBe('11122233344');
+    expect($motorista->fresh()->numero_registro)->toBe('11122233344');
+});
+
+it('salva e retorna o numero de registro como identificacao unica da CNH', function () {
+    $usuario = User::factory()->create();
+    $expiracao = now()->addYear()->toDateString();
+
+    $this->actingAs($usuario, 'jwt')->postJson('/api/motorista/cadastro/cnh', [
+        'numero_registro' => '00123456789',
+        'cnh_categoria' => 'AB',
+        'cnh_expiracao' => $expiracao,
+        'ear' => true,
+        'observacao' => "EAR\nA, B",
+    ])->assertCreated();
+
+    $this->assertDatabaseHas('motoristas', [
+        'user_id' => $usuario->id,
+        'numero_registro' => '00123456789',
+        'cnh_expiracao' => $expiracao,
+        'observacao' => "EAR\nA, B",
+    ]);
+    $this->actingAs($usuario, 'jwt')->getJson('/api/motorista/cadastro')
+        ->assertOk()
+        ->assertJsonPath('cnh.numero', '00123456789')
+        ->assertJsonPath('cnh.expiracao', $expiracao)
+        ->assertJsonPath('cnh.observacao', "EAR\nA, B")
+        ->assertJsonPath('pendencias', ['documentos', 'veiculo']);
 });

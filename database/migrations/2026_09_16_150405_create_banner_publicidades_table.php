@@ -13,7 +13,6 @@ return new class extends Migration
     {
         Schema::create('banner_publicidades', function (Blueprint $table) {
             $table->id();
-            $table->integer('cidade_id');
             $table->string('titulo');
             $table->string('name');
             $table->string('type');

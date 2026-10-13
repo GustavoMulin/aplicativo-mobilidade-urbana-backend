@@ -47,6 +47,19 @@ return [
             'report' => false,
         ],
 
+        'gestores_fotos' => [
+            'driver' => 'local',
+            'root' => public_path('images/gestores'),
+            'visibility' => 'public',
+            'throw' => true,
+        ],
+        'motorista_documentos_anexos' => [
+            'driver' => 'local',
+            'root' => public_path('motorista_documentos_anexos'),
+            'visibility' => 'public',
+            'throw' => true,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

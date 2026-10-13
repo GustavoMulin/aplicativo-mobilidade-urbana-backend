@@ -9,6 +9,7 @@ use App\Models\Motorista;
 use App\Models\Passageiro;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\App;
@@ -27,9 +28,25 @@ class UsuarioController extends Controller
      *
      * @return LengthAwarePaginator<int, User>
      */
-    public function index(): LengthAwarePaginator
+    public function index(Request $request): LengthAwarePaginator
     {
-        return User::orderBy('id', 'desc')->paginate();
+        $dados = $request->validate([
+            'search' => 'nullable|string|max:255',
+            'rowsPerPage' => 'sometimes|integer|between:0,50',
+        ]);
+
+        $query = User::query();
+        $busca = trim($dados['search'] ?? '');
+        if ($busca !== '') {
+            $termo = '%'.$busca.'%';
+            $cpf = preg_match('/^[\d\s.-]+$/', $busca) ? preg_replace('/\D/', '', $busca) : '';
+            $termoCpf = '%'.($cpf !== '' ? $cpf : $busca).'%';
+            $query->where(function (Builder $consulta) use ($termo, $termoCpf): void {
+                $consulta->where('name', 'like', $termo)->orWhere('cpf', 'like', $termoCpf);
+            });
+        }
+
+        return $query->orderBy('id', 'desc')->paginate(($dados['rowsPerPage'] ?? 15) ?: 15);
     }
 
     public function usuarioLogado(): ?User
@@ -209,7 +226,7 @@ class UsuarioController extends Controller
         return [
             'password.min' => 'A senha deve ter no mínimo 8 caracteres.',
             'data_nascimento.before_or_equal' => 'Você precisa ter pelo menos 18 anos para se cadastrar.',
-            'cnh_numero.required' => 'Informe o número da sua CNH.',
+            'numero_registro.required' => 'Informe o número de registro da sua CNH.',
             'cnh_categoria.in' => 'Categoria de CNH inválida.',
             'cnh_expiracao.after' => 'Sua CNH está vencida.',
         ];

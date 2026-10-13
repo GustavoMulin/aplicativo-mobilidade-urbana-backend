@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Route;
 
 require __DIR__.'/api/auth.php';
+require __DIR__.'/api/gestao.php';
 require __DIR__.'/api/webhooks.php';
 
 Route::middleware('auth:jwt')->group(function () {
@@ -17,6 +18,7 @@ Route::middleware('auth:jwt')->group(function () {
     require __DIR__.'/api/corrida.php';
     require __DIR__.'/api/tarifa.php';
     require __DIR__.'/api/produto.php';
+    require __DIR__.'/api/publicidade.php';
     require __DIR__.'/api/estimativa.php';
     require __DIR__.'/api/ajuda.php';
     require __DIR__.'/api/notificacoes.php';

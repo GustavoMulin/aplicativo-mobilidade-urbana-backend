@@ -54,8 +54,27 @@ return new class extends Migration
             $table->index(['uf', 'nome']);
         });
 
-        Schema::table('banner_publicidades', function (Blueprint $table) {
-            $table->unsignedBigInteger('cidade_id')->change();
+        if (! Schema::hasColumn('banner_publicidades', 'cidade_id')) {
+            Schema::table('banner_publicidades', function (Blueprint $table) {
+                $table->unsignedBigInteger('cidade_id')->nullable()->after('id');
+            });
+        }
+
+        $cidadeId = DB::table('cidades')->orderBy('id')->value('id');
+        if ($cidadeId !== null) {
+            DB::table('banner_publicidades')
+                ->whereNull('cidade_id')
+                ->update(['cidade_id' => $cidadeId]);
+        }
+
+        $possuiBannerSemCidade = DB::table('banner_publicidades')
+            ->whereNull('cidade_id')
+            ->exists();
+
+        Schema::table('banner_publicidades', function (Blueprint $table) use ($possuiBannerSemCidade) {
+            if (! $possuiBannerSemCidade) {
+                $table->unsignedBigInteger('cidade_id')->nullable(false)->change();
+            }
             $table->foreign('cidade_id')->references('id')->on('cidades')->restrictOnDelete();
             $table->dropColumn('url');
         });
@@ -65,7 +84,7 @@ return new class extends Migration
     {
         Schema::table('banner_publicidades', function (Blueprint $table) {
             $table->dropForeign(['cidade_id']);
-            $table->integer('cidade_id')->change();
+            $table->dropColumn('cidade_id');
             $table->string('url')->default('');
         });
 

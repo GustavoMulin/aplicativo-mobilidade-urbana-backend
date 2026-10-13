@@ -9,8 +9,10 @@ use App\Models\Motorista;
 use App\Models\MotoristaVeiculo;
 use App\Models\StatusBusca;
 use App\Models\Veiculo;
+use App\Services\AtualizarSituacaoMotoristaService;
 use App\Services\CarteiraMotoristaService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -31,6 +33,7 @@ class MotoristaController extends Controller
 
         $veiculos = MotoristaVeiculo::query()
             ->where('motorista_id', $motorista->id)
+            ->whereHas('veiculo', fn ($query) => $query->liberados())
             ->with('veiculo')
             ->orderByDesc('id')
             ->get()
@@ -143,6 +146,7 @@ class MotoristaController extends Controller
             'cor' => 'required|string|max:40',
             'placa' => ['required', 'string', 'regex:/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/', Rule::unique('veiculos', 'placa')],
             'renavam' => ['required', 'digits:11', Rule::unique('veiculos', 'renavam')],
+            'chassi' => ['nullable', 'string', 'regex:/^[A-HJ-NPR-Z0-9]{17}$/'],
             'categoria' => 'required|string|in:carro,moto',
             // não existe moto elétrica nas categorias
             'eletrico' => 'sometimes|boolean|declined_if:categoria,moto',
@@ -182,6 +186,8 @@ class MotoristaController extends Controller
             StatusBusca::where('motorista_id', $motorista->id)
                 ->update(['veiculo_id' => $veiculo->id]);
 
+            app(AtualizarSituacaoMotoristaService::class)->executar($motorista);
+
             return $veiculo;
         });
 
@@ -196,9 +202,32 @@ class MotoristaController extends Controller
      *
      * @return LengthAwarePaginator<int, Motorista>
      */
-    public function index(): LengthAwarePaginator
+    public function index(Request $request): LengthAwarePaginator
     {
-        return Motorista::with('user')->orderBy('id', 'desc')->paginate();
+        $dados = $request->validate([
+            'search' => 'nullable|string|max:255',
+            'rowsPerPage' => 'sometimes|integer|between:0,50',
+        ]);
+
+        $busca = trim($dados['search'] ?? '');
+        $query = Motorista::with('user');
+
+        if ($busca !== '') {
+            $termo = '%'.$busca.'%';
+            $cpf = preg_match('/^[\d\s.-]+$/', $busca) ? preg_replace('/\D/', '', $busca) : '';
+            $termoCpf = '%'.($cpf !== '' ? $cpf : $busca).'%';
+
+            $query->where(function (Builder $consulta) use ($termo, $termoCpf): void {
+                $consulta->where('nome', 'like', $termo)
+                    ->orWhere('cpf', 'like', $termoCpf)
+                    ->orWhereHas('user', function (Builder $usuario) use ($termo, $termoCpf): void {
+                        $usuario->where('name', 'like', $termo)
+                            ->orWhere('cpf', 'like', $termoCpf);
+                    });
+            });
+        }
+
+        return $query->orderBy('id', 'desc')->paginate(($dados['rowsPerPage'] ?? 15) ?: 15);
     }
 
     /**
@@ -208,13 +237,17 @@ class MotoristaController extends Controller
     {
         $dados = $request->validate([
             'user_id' => 'required|integer|exists:users,id|unique:motoristas,user_id',
-            'cnh_numero' => 'required|string',
-            'cnh_categoria' => 'required|string',
-            'cnh_expiracao' => 'required|date',
-            'ear' => 'required|boolean',
+            'numero_registro' => 'nullable|string|max:20',
+            'cnh_categoria' => 'nullable|string',
+            'cnh_expiracao' => 'nullable|date',
+            'ear' => 'nullable|boolean',
+            'observacao' => 'nullable|string|max:5000',
         ]);
 
-        $motorista = Motorista::create($dados);
+        $motorista = Motorista::create([
+            ...$dados,
+            'status' => 'pendente',
+        ]);
 
         return response()->json([
             'success' => true,
@@ -239,10 +272,11 @@ class MotoristaController extends Controller
         $motorista = Motorista::findOrFail($motoristaid);
 
         $dados = $request->validate([
-            'cnh_numero' => 'sometimes|required|string',
+            'numero_registro' => 'sometimes|required|string|max:20',
             'cnh_categoria' => 'sometimes|required|string',
             'cnh_expiracao' => 'sometimes|required|date',
             'ear' => 'sometimes|required|boolean',
+            'observacao' => 'sometimes|nullable|string|max:5000',
         ]);
 
         $motorista->update($dados);
@@ -269,7 +303,8 @@ class MotoristaController extends Controller
             'veiculo_id' => 'required|integer|exists:veiculos,id',
         ]);
 
-        $motoristaVeiculo = MotoristaVeiculo::create($dados);
+        $motoristaVeiculo = MotoristaVeiculo::firstOrCreate($dados);
+        app(AtualizarSituacaoMotoristaService::class)->executar(Motorista::findOrFail($dados['motorista_id']));
 
         return response()->json([
             'success' => true,
@@ -281,9 +316,16 @@ class MotoristaController extends Controller
     /**
      * @return LengthAwarePaginator<int, MotoristaVeiculo>
      */
-    public function motoristaVeiculos(int $motoristaid): LengthAwarePaginator
+    public function motoristaVeiculos(int $motoristaid): JsonResponse
     {
-        return MotoristaVeiculo::with(['motorista', 'veiculo'])
-            ->where('motorista_id', $motoristaid)->paginate();
+        Motorista::findOrFail($motoristaid);
+        $veiculos = MotoristaVeiculo::with(['motorista', 'veiculo.ultimoCrlv'])
+            ->where('motorista_id', $motoristaid)
+            ->whereHas('veiculo')->paginate();
+
+        return response()->json([
+            ...$veiculos->toArray(),
+            'possui_veiculo_cadastrado' => MotoristaVeiculo::where('motorista_id', $motoristaid)->exists(),
+        ]);
     }
 }

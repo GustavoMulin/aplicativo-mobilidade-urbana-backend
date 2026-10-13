@@ -18,7 +18,7 @@ function criarMotoristaParaVeiculos(): Motorista
     return Motorista::create([
         'user_id' => $usuario->id,
         'status' => 'aprovado',
-        'cnh_numero' => fake()->unique()->numerify('###########'),
+        'numero_registro' => fake()->unique()->numerify('###########'),
         'cnh_categoria' => 'B',
         'cnh_expiracao' => now()->addYear()->toDateString(),
         'ear' => true,

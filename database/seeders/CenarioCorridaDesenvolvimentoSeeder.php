@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Enums\TipoDocumentoMotorista;
 use App\Models\Motorista;
 use App\Models\MotoristaDocumento;
 use App\Models\MotoristaVeiculo;
@@ -39,7 +40,7 @@ class CenarioCorridaDesenvolvimentoSeeder extends Seeder
                 ['user_id' => $usuarioMotorista->id],
                 [
                     'status' => 'aprovado',
-                    'cnh_numero' => '99999999999',
+                    'numero_registro' => '99999999999',
                     'cnh_categoria' => 'AB',
                     'cnh_expiracao' => now()->addYears(5)->toDateString(),
                     'ear' => true,
@@ -66,7 +67,7 @@ class CenarioCorridaDesenvolvimentoSeeder extends Seeder
                 'veiculo_id' => $veiculo->id,
             ]);
 
-            foreach (['cnh', 'crlv', 'nada_consta', 'seguro_obrigatorio'] as $tipo) {
+            foreach (TipoDocumentoMotorista::valores() as $tipo) {
                 MotoristaDocumento::updateOrCreate(
                     ['motorista_id' => $motorista->id, 'tipo_documento' => $tipo],
                     [
@@ -74,9 +75,9 @@ class CenarioCorridaDesenvolvimentoSeeder extends Seeder
                         'type' => 'pdf',
                         'mime_type' => 'application/pdf',
                         'size' => 1,
-                        'path' => "motorista_documentos/$tipo-desenvolvimento.pdf",
+                        'path' => "motorista_documentos_anexos/$tipo-desenvolvimento.pdf",
                         'status' => 'aprovado',
-                        'observacao' => 'Dado fictício para desenvolvimento.',
+                        'url' => rtrim((string) config('app.url'), '/')."/motorista_documentos_anexos/$tipo-desenvolvimento.pdf",
                     ]
                 );
             }

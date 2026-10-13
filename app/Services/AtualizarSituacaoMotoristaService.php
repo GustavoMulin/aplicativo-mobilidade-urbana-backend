@@ -2,22 +2,11 @@
 
 namespace App\Services;
 
+use App\Enums\TipoDocumentoMotorista;
 use App\Models\Motorista;
-use App\Models\MotoristaDocumento;
 
 class AtualizarSituacaoMotoristaService
 {
-    /**
-     * Documentos que o painel de gestão analisa. A liberação do motorista é
-     * derivada deles: aprovar o último documento aprova o motorista.
-     */
-    public const DOCUMENTOS_EXIGIDOS = [
-        'cnh',
-        'crlv',
-        'nada_consta',
-        'seguro_obrigatorio',
-    ];
-
     public function executar(Motorista $motorista): string
     {
         $situacao = $this->calcular($motorista);
@@ -34,45 +23,33 @@ class AtualizarSituacaoMotoristaService
      */
     public function documentosQueFaltam(Motorista $motorista): array
     {
-        $documentos = MotoristaDocumento::where('motorista_id', $motorista->id)
-            ->whereIn('tipo_documento', self::DOCUMENTOS_EXIGIDOS)
-            ->orderByDesc('id')
-            ->get(['tipo_documento', 'status'])
-            ->unique('tipo_documento');
+        $service = app(DocumentosMotoristaService::class);
+        $documentos = $service->ultimos($motorista);
+        $faltam = [];
+        foreach (TipoDocumentoMotorista::cases() as $tipo) {
+            if ($tipo === TipoDocumentoMotorista::CRLV) {
+                $veiculos = $service->veiculos($motorista);
+                if ($veiculos->isEmpty() || $veiculos->contains(fn ($v) => ! $documentos->contains(fn ($d) => $d->tipo_documento === $tipo && $d->veiculo_id === $v->id && $d->status === 'aprovado'))) {
+                    $faltam[] = $tipo->value;
+                }
+            } elseif (! $documentos->contains(fn ($d) => $d->tipo_documento === $tipo && $d->status === 'aprovado')) {
+                $faltam[] = $tipo->value;
+            }
+        }
 
-        $aprovados = $documentos
-            ->where('status', 'aprovado')
-            ->pluck('tipo_documento')
-            ->all();
-
-        return array_values(array_diff(self::DOCUMENTOS_EXIGIDOS, $aprovados));
+        return $faltam;
     }
 
     private function calcular(Motorista $motorista): string
     {
-        $documentos = MotoristaDocumento::where('motorista_id', $motorista->id)
-            ->whereIn('tipo_documento', self::DOCUMENTOS_EXIGIDOS)
-            ->orderByDesc('id')
-            ->get(['tipo_documento', 'status'])
-            ->unique('tipo_documento');
-
+        $documentos = app(DocumentosMotoristaService::class)->ultimos($motorista);
         if ($documentos->isEmpty()) {
             return 'pendente';
         }
-
-        // um documento reprovado reprova o cadastro: o motorista precisa
-        // reenviar aquele item
-        if ($documentos->contains(fn ($documento) => $documento->status === 'reprovado')) {
+        if ($documentos->contains(fn ($d) => $d->status === 'reprovado')) {
             return 'reprovado';
         }
 
-        $aprovados = $documentos
-            ->where('status', 'aprovado')
-            ->pluck('tipo_documento')
-            ->unique();
-
-        $faltam = array_diff(self::DOCUMENTOS_EXIGIDOS, $aprovados->all());
-
-        return $faltam === [] ? 'aprovado' : 'em_analise';
+        return $this->documentosQueFaltam($motorista) === [] ? 'aprovado' : 'em_analise';
     }
 }
