@@ -20,8 +20,11 @@ class CarteiraMotoristaService
 
     public function saldo(Motorista $motorista): float
     {
+        // Pix ou cartão só vira saldo com o pagamento confirmado: sem isso o
+        // motorista sacaria um valor que a plataforma nunca recebeu
         $creditos = (float) $this->corridasFinalizadas($motorista)
             ->whereIn('corridas.metodo_pagamento', self::PAGOS_NO_APP)
+            ->where('corridas.status_pagamento', 'pago')
             ->sum('corrida_financeiros.valor_liquido_motorista');
         $taxasEmDinheiro = (float) $this->corridasFinalizadas($motorista)
             ->where('corridas.metodo_pagamento', 'dinheiro')
@@ -39,6 +42,9 @@ class CarteiraMotoristaService
     public function movimentos(Motorista $motorista, int $limite = 60): array
     {
         $corridas = $this->corridasFinalizadas($motorista)
+            ->where(fn (Builder $consulta) => $consulta
+                ->where('corridas.metodo_pagamento', 'dinheiro')
+                ->orWhere('corridas.status_pagamento', 'pago'))
             ->leftJoin('produtos_corridas', 'produtos_corridas.id', '=', 'corridas.produto_id')
             ->orderByDesc('corridas.tempo_final')
             ->limit($limite)

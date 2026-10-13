@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Corrida;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Motorista\MotoristaCadastroController;
 use App\Models\Motorista;
+use App\Models\MotoristaVeiculo;
 use App\Services\AlterarCorridaService;
 use App\Services\DespachoCorridaService;
 use Illuminate\Http\JsonResponse;
@@ -32,6 +33,23 @@ class CorridaMotoristaController extends Controller
 
         if ($motorista === null) {
             return $this->negarPorCadastro();
+        }
+
+        // só vale veículo do próprio cadastro: com o de outro motorista daria
+        // para receber Elétrico ou Táxi sem ter sido aprovado
+        if (isset($dados['veiculo_id']) && ! MotoristaVeiculo::where('motorista_id', $motorista->id)
+            ->where('veiculo_id', (int) $dados['veiculo_id'])
+            ->exists()) {
+            return response()->json(['message' => 'Este veículo não está no seu cadastro.'], 422);
+        }
+
+        // sem veículo o motorista ficava "Buscando" sem nunca receber corrida
+        // (toda corrida pede uma categoria de veículo)
+        if ($dados['disponivel'] && ! MotoristaVeiculo::where('motorista_id', $motorista->id)->exists()) {
+            return response()->json([
+                'message' => 'Cadastre um veículo para ficar online.',
+                'motivo' => 'sem_veiculo',
+            ], 422);
         }
 
         $status = $this->despachoCorridaService->atualizarDisponibilidade(

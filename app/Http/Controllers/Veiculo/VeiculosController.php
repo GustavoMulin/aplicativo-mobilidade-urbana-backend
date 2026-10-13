@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Veiculo;
 
 use App\Http\Controllers\Controller;
+use App\Models\Motorista;
+use App\Models\MotoristaVeiculo;
 use App\Models\Veiculo;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
@@ -40,7 +42,9 @@ class VeiculosController extends Controller
             ],
             'renavam' => 'required|string|max:11',
             'chassi' => ['nullable', 'string', 'regex:/^[A-HJ-NPR-Z0-9]{17}$/'],
-            'categoria' => 'required|string',
+            'categoria' => 'required|string|in:carro,moto',
+            'eletrico' => 'sometimes|boolean|declined_if:categoria,moto',
+            'taxi' => 'sometimes|boolean',
             'status' => 'required|string',
             'uf' => 'required|string|size:2',
         ]);
@@ -85,12 +89,39 @@ class VeiculosController extends Controller
             ],
             'renavam' => 'sometimes|required|string|max:11',
             'chassi' => ['nullable', 'string', 'regex:/^[A-HJ-NPR-Z0-9]{17}$/'],
-            'categoria' => 'sometimes|required|string',
+            'categoria' => 'sometimes|required|string|in:carro,moto',
+            'eletrico' => 'sometimes|boolean',
+            'taxi' => 'sometimes|boolean',
             'status' => 'sometimes|required|string',
             'uf' => 'sometimes|required|string|size:2',
         ]);
 
-        $veiculo->update($dados);
+        // ninguém aprova elétrico ou táxi no próprio veículo
+        $decideCategoria = array_key_exists('eletrico', $dados) || array_key_exists('taxi', $dados);
+        $motoristaDoUsuario = Motorista::where('user_id', $request->user()->id)->value('id');
+
+        if ($decideCategoria && $motoristaDoUsuario !== null && MotoristaVeiculo::where('motorista_id', $motoristaDoUsuario)
+            ->where('veiculo_id', $veiculo->id)
+            ->exists()) {
+            return response()->json([
+                'message' => 'Você não pode aprovar elétrico ou táxi no seu próprio veículo.',
+            ], 403);
+        }
+
+        $veiculo->fill($dados);
+        // a gestão decidindo elétrico ou táxi encerra o pedido do motorista
+        if (array_key_exists('eletrico', $dados)) {
+            $veiculo->eletrico_solicitado = false;
+        }
+        if (array_key_exists('taxi', $dados)) {
+            $veiculo->taxi_solicitado = false;
+        }
+        // não existe moto elétrica: trocar para moto tira a marcação
+        if ($veiculo->categoria === 'moto') {
+            $veiculo->eletrico = false;
+            $veiculo->eletrico_solicitado = false;
+        }
+        $veiculo->save();
 
         return response()->json([
             'success' => true,

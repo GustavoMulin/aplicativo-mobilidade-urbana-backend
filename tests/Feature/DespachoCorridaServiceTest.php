@@ -320,7 +320,9 @@ it('agrega reputacao e mantem consultas constantes com muitas ofertas', function
     expect($ofertas)->toHaveCount(40)
         ->and($ofertas->first()['passageiro_nota'])->toBe(5.0)
         ->and($ofertas->first()['passageiro_corridas'])->toBe(1)
-        ->and($consultas)->toBeLessThanOrEqual(8);
+        // fixas, não crescem com as ofertas: inclui o veículo do motorista e
+        // as categorias aceitas em cada pedido
+        ->and($consultas)->toBeLessThanOrEqual(10);
 });
 
 it('impede aceite direto por motorista offline', function () {
@@ -742,6 +744,21 @@ it('protege os dados pessoais no detalhe da corrida e mostra somente o primeiro 
         ->assertJsonMissingPath('motorista.user.data_nascimento');
 });
 
+it('manda os horarios da corrida com fuso, para o app nao ler UTC como hora local', function () {
+    [$motorista] = criarMotoristaDespacho(true);
+    $passageiro = criarPassageiroDespacho();
+    $corrida = criarCorridaDespacho($passageiro);
+    $corrida->update(['tempo_solicitacao' => '2026-10-09 12:34:45']);
+    app(DespachoCorridaService::class)->aceitar($motorista, $corrida->id);
+
+    $resposta = $this->actingAs($passageiro->user, 'jwt')
+        ->getJson('/api/corridas/'.$corrida->id)
+        ->assertOk();
+
+    expect($resposta->json('tempo_solicitacao'))->toBe('2026-10-09T12:34:45.000000Z')
+        ->and($resposta->json('tempo_aceite'))->toEndWith('Z');
+});
+
 it('fecha o fluxo completo e permite uma avaliacao para cada lado', function () {
     Event::fake([CorridaAtualizada::class, CorridasDisponiveisAlteradas::class]);
     [$motorista] = criarMotoristaDespacho(true);
@@ -816,6 +833,25 @@ it('mostra a avaliacao uma vez e preserva nota maxima quando o passageiro dispen
 
     expect(AvaliacoesCorrida::where('corrida_id', $corrida->id)
         ->where('usuario_id', $passageiro->user_id)->count())->toBe(1);
+});
+
+it('o motorista avalia pelo primeiro nome do convidado, sem o telefone dele', function () {
+    [$motorista] = criarMotoristaDespacho(true);
+    $passageiro = criarPassageiroDespacho();
+    $servico = app(DespachoCorridaService::class);
+    $corrida = criarCorridaDespacho($passageiro);
+    $corrida->update(['convidado_nome' => 'Maria Aparecida', 'convidado_telefone' => '69999990000']);
+    $servico->aceitar($motorista, $corrida->id);
+    $servico->transicionar($motorista, $corrida->id, 'cheguei');
+    $servico->transicionar($motorista, $corrida->id, 'iniciar');
+    $servico->transicionar($motorista, $corrida->id, 'finalizar');
+
+    $this->actingAs($motorista->user, 'jwt')
+        ->getJson('/api/corrida-para-avaliar')
+        ->assertOk()
+        ->assertJsonPath('avaliando_como', 'motorista')
+        ->assertJsonPath('corrida.convidado_nome', 'Maria')
+        ->assertJsonMissingPath('corrida.convidado_telefone');
 });
 
 it('aceita registrar_padrao=true na query, como o axios do app envia', function () {

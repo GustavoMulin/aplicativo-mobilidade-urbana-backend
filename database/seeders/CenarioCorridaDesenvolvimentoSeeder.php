@@ -56,7 +56,7 @@ class CenarioCorridaDesenvolvimentoSeeder extends Seeder
                     'ano_modelo' => 2026,
                     'cor' => 'Preto',
                     'renavam' => '90000000001',
-                    'categoria' => 'pop',
+                    'categoria' => 'carro',
                     'status' => 'aprovado',
                     'uf' => 'RO',
                 ]

@@ -69,7 +69,9 @@ class StoreMetodoResgateRequest extends FormRequest
             'conta' => ['required_if:tipo,conta', 'nullable', 'digits_between:1,13'],
             'conta_digito' => ['required_if:tipo,conta', 'nullable', 'string', 'size:1', 'alpha_num'],
             'conta_tipo' => ['required_if:tipo,conta', 'nullable', Rule::in(MetodoResgate::TIPOS_CONTA)],
-            'codigo' => ['required_if:tipo,conta', 'nullable', 'digits:6'],
+            // trocar para onde vão os saques sempre pede o código por SMS:
+            // sem isso, quem pegar a sessão do motorista desvia o dinheiro
+            'codigo' => ['required', 'digits:6'],
         ];
     }
 
@@ -87,7 +89,7 @@ class StoreMetodoResgateRequest extends FormRequest
             'conta.required_if' => 'Informe a conta.',
             'conta_digito.required_if' => 'Informe o dígito da conta.',
             'conta_tipo.required_if' => 'Escolha o tipo da conta.',
-            'codigo.required_if' => 'Informe o código enviado por SMS.',
+            'codigo.required' => 'Informe o código enviado por SMS.',
         ];
     }
 
@@ -107,7 +109,7 @@ class StoreMetodoResgateRequest extends FormRequest
                     $validator->errors()->add('pix_chave', 'A chave Pix não corresponde ao tipo escolhido.');
                 }
 
-                if ($this->input('tipo') === 'conta' && $this->filled('codigo') && ! $this->codigoConfere()) {
+                if ($this->filled('codigo') && ! $this->codigoConfere()) {
                     $validator->errors()->add('codigo', 'Código inválido ou expirado. Peça um novo.');
                 }
             },

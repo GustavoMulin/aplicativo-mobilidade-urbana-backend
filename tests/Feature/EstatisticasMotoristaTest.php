@@ -210,7 +210,7 @@ it('soma os ganhos do dia e o saldo só com corridas finalizadas', function () {
             'tempo_solicitacao' => now()->subDay(),
             'tempo_final' => $quando,
             'metodo_pagamento' => 'pix',
-            'status_pagamento' => 'pendente',
+            'status_pagamento' => 'pago',
         ]);
         DB::table('corrida_financeiros')->insert([
             'corrida_id' => $corrida->id,

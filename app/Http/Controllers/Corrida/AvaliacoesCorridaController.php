@@ -61,9 +61,16 @@ class AvaliacoesCorridaController extends Controller
 
         foreach ([$corrida->motorista?->user, $corrida->passageiro?->user] as $usuario) {
             if ($usuario !== null) {
-                $usuario->setAttribute('name', preg_split('/\s+/u', trim((string) $usuario->name), 2)[0] ?? '');
+                $usuario->setAttribute('name', $this->primeiroNome((string) $usuario->name));
             }
         }
+
+        // quem viajou foi o convidado: o motorista avalia pelo nome dele, e o
+        // telefone já não serve depois da corrida
+        if ($corrida->convidado_nome !== null) {
+            $corrida->setAttribute('convidado_nome', $this->primeiroNome($corrida->convidado_nome));
+        }
+        $corrida->makeHidden('convidado_telefone');
 
         return response()->json([
             'corrida' => $corrida,
@@ -170,5 +177,10 @@ class AvaliacoesCorridaController extends Controller
         }
 
         return null;
+    }
+
+    private function primeiroNome(string $nome): string
+    {
+        return preg_split('/\s+/u', trim($nome), 2)[0] ?? '';
     }
 }

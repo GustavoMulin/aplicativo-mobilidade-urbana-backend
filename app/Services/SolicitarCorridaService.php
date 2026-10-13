@@ -6,6 +6,7 @@ use App\Events\CorridasDisponiveisAlteradas;
 use App\Models\Corrida;
 use App\Models\CorridaDestino;
 use App\Models\CorridaFinanceiro;
+use App\Models\CorridaOpcao;
 use App\Models\CotacaoCorrida;
 use App\Models\Passageiro;
 use App\Models\User;
@@ -25,20 +26,36 @@ class SolicitarCorridaService
         'em_andamento',
     ];
 
+    public function __construct(
+        private readonly EnderecoPorCoordenadaService $enderecoPorCoordenada,
+    ) {}
+
     /**
+     * @param  list<string>  $produtosCodigos  categorias aceitas pelo passageiro; a corrida vai para quem atende qualquer uma
      * @param  array{nome: string, telefone: string}|null  $convidado  quem vai viajar, se não for o titular da conta
+     * @param  float|null  $valorOferecido  no Negocia, quanto o passageiro oferece pagar
      */
     public function executar(
         User $usuario,
         CotacaoCorrida $cotacao,
-        string $produtoCodigo,
+        array $produtosCodigos,
         ?string $metodoPagamento = null,
-        ?array $convidado = null
+        ?array $convidado = null,
+        ?float $valorOferecido = null
     ): Corrida {
-        $categoria = $cotacao->categoria($produtoCodigo);
+        $categorias = $this->categoriasEscolhidas($cotacao, $produtosCodigos);
 
-        if ($categoria === null) {
-            throw new RuntimeException('Categoria não faz parte desta cotação.');
+        // reserva a mais cara; se aceitar alguém de uma categoria mais barata,
+        // a corrida passa a custar a dele e a sobra volta em crédito na liquidação
+        $categoria = $categorias[0];
+        $negociada = ($categoria['produto']['estrategia_precificacao'] ?? null) === 'negociada';
+
+        if ($negociada) {
+            $categoria = NegociacaoCorridaService::categoriaComOferta(
+                $categoria,
+                $valorOferecido ?? (float) $categoria['valores']['valor_passageiro']
+            );
+            $categorias = [$categoria];
         }
 
         $passageiro = Passageiro::firstOrCreate(['user_id' => $usuario->id]);
@@ -47,9 +64,10 @@ class SolicitarCorridaService
         // valor em aberto de corrida anterior bloqueia qualquer novo pedido
         $pagamento->exigirSemPendencia($passageiro->id);
 
-        $prePago = $pagamento->ehPrePago($metodoPagamento);
+        // no Negocia a cobrança só é gerada depois que o passageiro escolhe a proposta
+        $prePago = ! $negociada && $pagamento->ehPrePago($metodoPagamento);
 
-        $corrida = DB::transaction(function () use ($cotacao, $categoria, $passageiro, $metodoPagamento, $prePago, $pagamento, $convidado) {
+        $corrida = DB::transaction(function () use ($cotacao, $categoria, $categorias, $passageiro, $metodoPagamento, $prePago, $pagamento, $convidado, $negociada) {
             // trava o passageiro: dois pedidos simultâneos não criam duas
             // corridas ativas nem gastam o mesmo crédito
             Passageiro::whereKey($passageiro->id)->lockForUpdate()->first();
@@ -78,6 +96,7 @@ class SolicitarCorridaService
                 'cidade_id' => $cotacao->cidade_id,
                 // pré-pago: invisível aos motoristas até o pagamento ser confirmado
                 'status_corrida' => $prePago ? 'aguardando_pagamento' : 'solicitada',
+                'status_negociacao' => $negociada ? 'em_negociacao' : null,
                 'tempo_solicitacao' => now(),
                 'distancia_total' => $cotacao->distancia_km,
                 'valor_estimado_inicial' => $categoria['valores']['valor_passageiro'],
@@ -87,6 +106,7 @@ class SolicitarCorridaService
 
             $this->gravarDestinos($corrida, $cotacao);
             $this->gravarFinanceiro($corrida, $categoria, $metodoPagamento);
+            $this->gravarOpcoes($corrida, $categorias);
 
             if ($prePago) {
                 $valor = (float) $categoria['valores']['valor_passageiro'];
@@ -142,6 +162,67 @@ class SolicitarCorridaService
         }
     }
 
+    /**
+     * @param  list<string>  $codigos
+     * @return non-empty-list<array<string, mixed>> da mais cara para a mais barata
+     */
+    private function categoriasEscolhidas(CotacaoCorrida $cotacao, array $codigos): array
+    {
+        $categorias = [];
+
+        foreach (array_values(array_unique($codigos)) as $codigo) {
+            $categoria = $cotacao->categoria($codigo);
+
+            if ($categoria === null) {
+                throw new RuntimeException('Categoria não faz parte desta cotação.');
+            }
+
+            $categorias[] = $categoria;
+        }
+
+        if ($categorias === []) {
+            throw new RuntimeException('Escolha ao menos uma categoria.');
+        }
+
+        if (count($categorias) > 1) {
+            foreach ($categorias as $categoria) {
+                if (($categoria['produto']['estrategia_precificacao'] ?? null) === 'negociada') {
+                    throw new RuntimeException('O Negocia é pedido sozinho, sem outras categorias.');
+                }
+
+                if (($categoria['produto']['grupo'] ?? null) === 'entrega') {
+                    throw new RuntimeException('A entrega é pedida separada das corridas.');
+                }
+            }
+        }
+
+        usort($categorias, fn (array $a, array $b) => (float) $b['valores']['valor_passageiro'] <=> (float) $a['valores']['valor_passageiro']);
+
+        return $categorias;
+    }
+
+    /**
+     * @param  non-empty-list<array<string, mixed>>  $categorias
+     */
+    private function gravarOpcoes(Corrida $corrida, array $categorias): void
+    {
+        foreach ($categorias as $categoria) {
+            // tarifa sem produto não restringe quem pode atender
+            if (($categoria['produto']['id'] ?? null) === null) {
+                continue;
+            }
+
+            CorridaOpcao::create([
+                'corrida_id' => $corrida->id,
+                'produto_id' => $categoria['produto']['id'],
+                'tarifa_id' => $categoria['tarifa_id'] ?? null,
+                'valor_passageiro' => $categoria['valores']['valor_passageiro'],
+                'valor_motorista' => $categoria['valores']['valor_motorista'],
+                'categoria' => $categoria,
+            ]);
+        }
+    }
+
     private function gravarDestinos(Corrida $corrida, CotacaoCorrida $cotacao): void
     {
         $enderecos = $cotacao->enderecos;
@@ -153,13 +234,22 @@ class SolicitarCorridaService
                 $indice === $ultimo => 'destino',
                 default => 'parada',
             };
+            $texto = (string) ($endereco['formattedAddress'] ?? '');
+
+            // "Localização Atual" não diz ao motorista onde buscar
+            if ($this->enderecoPorCoordenada->semEndereco($texto)) {
+                $texto = $this->enderecoPorCoordenada->executar(
+                    (float) $endereco['latitude'],
+                    (float) $endereco['longitude'],
+                ) ?? $texto;
+            }
 
             CorridaDestino::create([
                 'corrida_id' => $corrida->id,
-                'nome_local' => $endereco['formattedAddress'] ?? '',
+                'nome_local' => $texto,
                 'tipo' => $tipo,
                 'ordem' => $indice,
-                'endereco' => $endereco['formattedAddress'] ?? '',
+                'endereco' => $texto,
                 'latitude' => $endereco['latitude'],
                 'longitude' => $endereco['longitude'],
             ]);
@@ -171,11 +261,26 @@ class SolicitarCorridaService
      */
     private function gravarFinanceiro(Corrida $corrida, array $categoria, ?string $metodoPagamento): void
     {
+        CorridaFinanceiro::create([
+            'corrida_id' => $corrida->id,
+            ...self::valoresDaCategoria($categoria),
+            'metodo_pagamento' => $metodoPagamento,
+        ]);
+    }
+
+    /**
+     * Colunas do financeiro que vêm da categoria cotada (também usadas quando
+     * a corrida troca de categoria no aceite).
+     *
+     * @param  array<string, mixed>  $categoria
+     * @return array<string, mixed>
+     */
+    public static function valoresDaCategoria(array $categoria): array
+    {
         $composicao = $categoria['composicao'];
         $valores = $categoria['valores'];
 
-        CorridaFinanceiro::create([
-            'corrida_id' => $corrida->id,
+        return [
             'valor_bruto' => $composicao['subtotal'],
             'tarifa_base' => $composicao['tarifa_base'],
             'valor_por_km' => $composicao['valor_distancia'],
@@ -191,8 +296,7 @@ class SolicitarCorridaService
             'valor_motorista' => $valores['valor_motorista'],
             'valor_liquido_motorista' => $valores['valor_motorista'],
             'valor_repassado_plataforma' => $valores['taxa_plataforma'],
-            'metodo_pagamento' => $metodoPagamento,
-        ]);
+        ];
     }
 
     private function gerarCodigo(): string
