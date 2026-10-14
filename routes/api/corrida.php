@@ -2,7 +2,6 @@
 
 // CODEX: 5 linhas alteradas neste arquivo; limita consultas repetidas da prévia de cancelamento.
 
-use App\Http\Controllers\Corrida\AceiteAutomaticoNegociaController;
 use App\Http\Controllers\Corrida\AumentarOfertaNegociaController;
 use App\Http\Controllers\Corrida\AvaliacoesCorridaController;
 use App\Http\Controllers\Corrida\CobrancaCartaoController;
@@ -34,9 +33,6 @@ Route::get('corridas/{corrida}/propostas', [NegociacaoCorridaController::class, 
 Route::post('corridas/{corrida}/oferta', AumentarOfertaNegociaController::class)
     ->whereNumber('corrida')
     ->middleware('throttle:20,1,negocia-aumentar');
-Route::put('corridas/{corrida}/aceite-automatico', AceiteAutomaticoNegociaController::class)
-    ->whereNumber('corrida')
-    ->middleware('throttle:30,1,negocia-aceite-automatico');
 Route::post('corridas/{corrida}/propostas/{proposta}/escolher', [NegociacaoCorridaController::class, 'escolher'])
     ->whereNumber('proposta')
     ->middleware('throttle:20,1,negocia-escolher');

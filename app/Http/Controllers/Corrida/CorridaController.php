@@ -296,7 +296,10 @@ class CorridaController extends Controller
             ->first();
 
         if ($corrida === null) {
-            return response()->json(['corrida' => null]);
+            return response()->json([
+                'corrida' => null,
+                'encerrada' => $this->resumoDaCanceladaRecente($request, $dados['perfil'] ?? null),
+            ]);
         }
 
         $this->reduzirNomes($corrida);
@@ -354,6 +357,37 @@ class CorridaController extends Controller
                 ? $this->contabilizarEsperaCorridaService->resumo($corrida)
                 : null,
         ]);
+    }
+
+    /**
+     * O motorista que estava numa corrida recém-cancelada fica sabendo quem
+     * cancelou (e a taxa que recebeu), em vez da corrida só sumir da tela.
+     *
+     * @return array{id: int, cancelado_por: string|null, taxa_cancelamento: float}|null
+     */
+    private function resumoDaCanceladaRecente(Request $request, ?string $perfil): ?array
+    {
+        if ($perfil !== 'motorista') {
+            return null;
+        }
+
+        $cancelada = $this->doUsuario($request, $perfil)
+            ->where('status_corrida', 'cancelada')
+            ->whereNotNull('motorista_id')
+            ->where('updated_at', '>=', now()->subMinutes(3))
+            ->with('corrida_financeiro:id,corrida_id,taxa_cancelamento')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($cancelada === null) {
+            return null;
+        }
+
+        return [
+            'id' => $cancelada->id,
+            'cancelado_por' => $cancelada->cancelado_por,
+            'taxa_cancelamento' => (float) ($cancelada->corrida_financeiro->taxa_cancelamento ?? 0),
+        ];
     }
 
     /**
@@ -501,6 +535,8 @@ class CorridaController extends Controller
             'produtos_codigos.*' => 'string|max:60|distinct',
             // Negocia: quanto o passageiro oferece
             'valor_oferecido' => 'nullable|numeric|min:1|max:5000',
+            // Negocia: escolhe sozinho o primeiro motorista que aceitar a oferta
+            'aceite_automatico' => 'nullable|boolean',
             'metodo_pagamento' => 'nullable|in:dinheiro,cartao,pix',
             'convidado' => 'nullable|array',
             'convidado.nome' => 'required_with:convidado|string|min:2|max:60',
@@ -531,7 +567,8 @@ class CorridaController extends Controller
                 produtosCodigos: array_values(array_map('strval', $dados['produtos_codigos'] ?? [$dados['produto_codigo']])),
                 metodoPagamento: $dados['metodo_pagamento'] ?? null,
                 convidado: $dados['convidado'] ?? null,
-                valorOferecido: isset($dados['valor_oferecido']) ? (float) $dados['valor_oferecido'] : null
+                valorOferecido: isset($dados['valor_oferecido']) ? (float) $dados['valor_oferecido'] : null,
+                aceiteAutomatico: $request->boolean('aceite_automatico')
             );
         } catch (RuntimeException $excecao) {
             $status = $excecao->getCode() === 409 ? 409 : 422;

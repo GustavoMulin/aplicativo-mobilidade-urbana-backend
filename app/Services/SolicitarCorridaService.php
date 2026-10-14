@@ -34,6 +34,7 @@ class SolicitarCorridaService
      * @param  list<string>  $produtosCodigos  categorias aceitas pelo passageiro; a corrida vai para quem atende qualquer uma
      * @param  array{nome: string, telefone: string}|null  $convidado  quem vai viajar, se não for o titular da conta
      * @param  float|null  $valorOferecido  no Negocia, quanto o passageiro oferece pagar
+     * @param  bool  $aceiteAutomatico  no Negocia, escolhe sozinho o primeiro motorista que aceitar a oferta
      */
     public function executar(
         User $usuario,
@@ -41,7 +42,8 @@ class SolicitarCorridaService
         array $produtosCodigos,
         ?string $metodoPagamento = null,
         ?array $convidado = null,
-        ?float $valorOferecido = null
+        ?float $valorOferecido = null,
+        bool $aceiteAutomatico = false
     ): Corrida {
         $categorias = $this->categoriasEscolhidas($cotacao, $produtosCodigos);
 
@@ -67,7 +69,7 @@ class SolicitarCorridaService
         // no Negocia a cobrança só é gerada depois que o passageiro escolhe a proposta
         $prePago = ! $negociada && $pagamento->ehPrePago($metodoPagamento);
 
-        $corrida = DB::transaction(function () use ($cotacao, $categoria, $categorias, $passageiro, $metodoPagamento, $prePago, $pagamento, $convidado, $negociada) {
+        $corrida = DB::transaction(function () use ($cotacao, $categoria, $categorias, $passageiro, $metodoPagamento, $prePago, $pagamento, $convidado, $negociada, $aceiteAutomatico) {
             // trava o passageiro: dois pedidos simultâneos não criam duas
             // corridas ativas nem gastam o mesmo crédito
             Passageiro::whereKey($passageiro->id)->lockForUpdate()->first();
@@ -97,6 +99,7 @@ class SolicitarCorridaService
                 // pré-pago: invisível aos motoristas até o pagamento ser confirmado
                 'status_corrida' => $prePago ? 'aguardando_pagamento' : 'solicitada',
                 'status_negociacao' => $negociada ? 'em_negociacao' : null,
+                'aceite_automatico' => $negociada && $aceiteAutomatico,
                 'tempo_solicitacao' => now(),
                 'distancia_total' => $cotacao->distancia_km,
                 'valor_estimado_inicial' => $categoria['valores']['valor_passageiro'],
