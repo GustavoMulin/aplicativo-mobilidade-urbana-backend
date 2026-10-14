@@ -3,6 +3,7 @@
 use App\Http\Controllers\Auth\GestorAutenticacaoController;
 use App\Http\Controllers\Corrida\CorridaController;
 use App\Http\Controllers\Gestao\FotoPerfilController;
+use App\Http\Controllers\Gestao\VeiculoUsuariosController;
 use App\Http\Controllers\Gestor\GestorController;
 use App\Http\Controllers\Motorista\MotoristaController;
 use App\Http\Controllers\Motorista\MotoristaDocumentoController;
@@ -45,6 +46,8 @@ Route::prefix('gestao')->name('gestao.')->group(function () {
         Route::apiResource('motorista-documentos', MotoristaDocumentoController::class);
         Route::put('mudar-status-documento/{motoristaDocumentoId}', [MotoristaDocumentoController::class, 'mudarStatusDocumento']);
         Route::apiResource('corridas', CorridaController::class)->only(['index', 'show']);
+
+        Route::get('veiculos/{veiculoId}/usuarios', VeiculoUsuariosController::class)->whereNumber('veiculoId');
 
         require __DIR__.'/veiculo.php';
         require __DIR__.'/passageiro.php';

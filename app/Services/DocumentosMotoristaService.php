@@ -12,15 +12,17 @@ class DocumentosMotoristaService
 {
     public function veiculos(Motorista $motorista): Collection
     {
-        return MotoristaVeiculo::where('motorista_id', $motorista->id)->with('veiculo')->orderBy('id')->get()->pluck('veiculo')->filter()->unique('id')->values();
+        return MotoristaVeiculo::where('motorista_id', $motorista->id)->with('veiculo.ultimoCrlv')->orderBy('id')->get()->pluck('veiculo')->filter()->unique('id')->values();
     }
 
     public function ultimos(Motorista $motorista): Collection
     {
         $veiculos = $this->veiculos($motorista)->pluck('id');
 
-        return MotoristaDocumento::where('motorista_id', $motorista->id)->where('ordem', 0)->with('veiculo')->orderByDesc('id')->get()
-            ->filter(fn ($d) => $d->tipo_documento !== TipoDocumentoMotorista::CRLV || $veiculos->contains($d->veiculo_id))
+        return MotoristaDocumento::where('ordem', 0)->where(function ($query) use ($motorista, $veiculos): void {
+            $query->where(fn ($pessoais) => $pessoais->where('motorista_id', $motorista->id)->where('tipo_documento', '!=', TipoDocumentoMotorista::CRLV))
+                ->orWhere(fn ($crlv) => $crlv->where('tipo_documento', TipoDocumentoMotorista::CRLV)->whereIn('veiculo_id', $veiculos));
+        })->with('veiculo')->orderByDesc('id')->get()
             ->unique(fn ($d) => $d->tipo_documento->value.':'.($d->veiculo_id ?? 'motorista'))->values();
     }
 

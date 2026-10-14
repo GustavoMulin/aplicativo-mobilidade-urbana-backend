@@ -72,10 +72,10 @@ class PassageiroController extends Controller
             $termo = '%'.$busca.'%';
             $cpf = preg_match('/^[\d\s.-]+$/', $busca) ? preg_replace('/\D/', '', $busca) : $busca;
             $query->where(function (Builder $consulta) use ($termo, $cpf): void {
-                $consulta->where('email', 'like', $termo)->orWhere('telefone', 'like', $termo)
-                    ->orWhereHas('user', function (Builder $usuario) use ($termo, $cpf): void {
-                        $usuario->where('name', 'like', $termo)->orWhere('cpf', 'like', '%'.$cpf.'%');
-                    });
+                $consulta->whereHas('user', function (Builder $usuario) use ($termo, $cpf): void {
+                    $usuario->where('name', 'like', $termo)->orWhere('cpf', 'like', '%'.$cpf.'%')
+                        ->orWhere('email', 'like', $termo)->orWhere('telefone', 'like', $termo);
+                });
             });
         }
 

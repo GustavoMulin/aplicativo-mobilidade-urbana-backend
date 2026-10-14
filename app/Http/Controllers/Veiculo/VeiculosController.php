@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Veiculo;
 
 use App\Http\Controllers\Controller;
+use App\Models\Gestor;
 use App\Models\Motorista;
 use App\Models\MotoristaVeiculo;
 use App\Models\Veiculo;
@@ -19,9 +20,24 @@ class VeiculosController extends Controller
      *
      * @return LengthAwarePaginator<int, Veiculo>
      */
-    public function index(): LengthAwarePaginator
+    public function index(Request $request): LengthAwarePaginator
     {
-        return Veiculo::visiveis()->orderBy('id', 'desc')->paginate();
+        $dados = $request->validate([
+            'search' => 'nullable|string|max:255',
+            'rowsPerPage' => 'sometimes|integer|between:1,100',
+            'page' => 'sometimes|integer|min:1',
+        ]);
+        $query = $request->user() instanceof Gestor ? Veiculo::query() : Veiculo::visiveis();
+        $busca = trim($dados['search'] ?? '');
+        if ($busca !== '') {
+            $query->where(function ($consulta) use ($busca): void {
+                foreach (['marca', 'modelo', 'placa', 'renavam', 'cor'] as $campo) {
+                    $consulta->orWhere($campo, 'like', '%'.$busca.'%');
+                }
+            });
+        }
+
+        return $query->orderBy('id', 'desc')->paginate($dados['rowsPerPage'] ?? 15);
     }
 
     /**
@@ -29,6 +45,7 @@ class VeiculosController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        $request->merge(['cpf_cnpj_proprietario' => preg_replace('/\D/', '', (string) $request->input('cpf_cnpj_proprietario'))]);
         $dados = $request->validate([
             'marca' => 'required|string',
             'modelo' => 'required|string',
@@ -42,6 +59,8 @@ class VeiculosController extends Controller
             ],
             'renavam' => 'required|string|max:11',
             'chassi' => ['nullable', 'string', 'regex:/^[A-HJ-NPR-Z0-9]{17}$/'],
+            'cpf_cnpj_proprietario' => ['required', 'string', 'regex:/^(?:[0-9]{11}|[0-9]{14})$/'],
+            'nome_proprietario' => 'nullable|string|max:255',
             'categoria' => 'required|string|in:carro,moto',
             'eletrico' => 'sometimes|boolean|declined_if:categoria,moto',
             'taxi' => 'sometimes|boolean',
