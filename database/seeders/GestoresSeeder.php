@@ -13,18 +13,21 @@ class GestoresSeeder extends Seeder
         $gestores = [
             [
                 'name' => 'Gestor Um',
+                'perfil_acesso' => 'admin',
                 'cpf' => '52998224725',
                 'data_nascimento' => '1990-01-15',
                 'email' => 'gestor1@example.com',
             ],
             [
                 'name' => 'Gestor Dois',
+                'perfil_acesso' => 'gestao',
                 'cpf' => '11144477735',
                 'data_nascimento' => '1992-05-20',
                 'email' => 'gestor2@example.com',
             ],
             [
                 'name' => 'Gestor Três',
+                'perfil_acesso' => 'atendimento',
                 'cpf' => '12345678909',
                 'data_nascimento' => '1994-09-10',
                 'email' => 'gestor3@example.com',

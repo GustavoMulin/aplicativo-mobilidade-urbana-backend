@@ -26,10 +26,13 @@ class CadastroDesenvolvimentoSeeder extends Seeder
             $usuarioMotorista = $this->usuario('Motorista de teste', 'motorista@example.com', '11144477735', '69999990001');
             $usuarioPassageiro = $this->usuario('Passageiro de teste', 'passageiro@example.com', '12345678909', '69999990002');
 
-            Gestor::firstOrCreate(['email' => 'gestor1@example.com', 'cpf' => '52998224725'], [
+            $gestor = Gestor::firstOrCreate(['email' => 'gestor1@example.com', 'cpf' => '52998224725'], [
                 'name' => 'Gestor de teste', 'telefone' => '69999990003',
                 'data_nascimento' => '1990-01-15', 'password' => 'password',
             ]);
+            if ($gestor->wasRecentlyCreated) {
+                $gestor->forceFill(['perfil_acesso' => 'admin'])->save();
+            }
             Passageiro::firstOrCreate(['user_id' => $usuarioPassageiro->id], ['status' => 'ativo']);
 
             $cnh = [
