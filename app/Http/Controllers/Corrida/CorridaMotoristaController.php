@@ -52,13 +52,17 @@ class CorridaMotoristaController extends Controller
             ], 422);
         }
 
-        $status = $this->despachoCorridaService->atualizarDisponibilidade(
-            motorista: $motorista,
-            disponivel: (bool) $dados['disponivel'],
-            latitude: isset($dados['latitude']) ? (float) $dados['latitude'] : null,
-            longitude: isset($dados['longitude']) ? (float) $dados['longitude'] : null,
-            veiculoId: isset($dados['veiculo_id']) ? (int) $dados['veiculo_id'] : null
-        );
+        try {
+            $status = $this->despachoCorridaService->atualizarDisponibilidade(
+                motorista: $motorista,
+                disponivel: (bool) $dados['disponivel'],
+                latitude: isset($dados['latitude']) ? (float) $dados['latitude'] : null,
+                longitude: isset($dados['longitude']) ? (float) $dados['longitude'] : null,
+                veiculoId: isset($dados['veiculo_id']) ? (int) $dados['veiculo_id'] : null
+            );
+        } catch (RuntimeException $excecao) {
+            return response()->json(['message' => $excecao->getMessage()], $this->status($excecao));
+        }
 
         return response()->json($status);
     }

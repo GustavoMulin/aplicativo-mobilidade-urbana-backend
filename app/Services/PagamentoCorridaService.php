@@ -12,7 +12,6 @@ use App\Models\Corrida;
 use App\Models\CorridaFinanceiro;
 use App\Models\MovimentoCredito;
 use App\Models\Passageiro;
-use App\Models\StatusBusca;
 use App\Support\Avisar;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -310,8 +309,7 @@ class PagamentoCorridaService
                 ]);
 
                 if ($corrida->motorista_id !== null) {
-                    StatusBusca::where('motorista_id', $corrida->motorista_id)
-                        ->update(['disponivel' => true, 'visto_em' => now()]);
+                    app(CompartilhamentoVeiculoService::class)->retomarDisponibilidade((int) $corrida->motorista_id);
                 }
 
                 return $corrida;
