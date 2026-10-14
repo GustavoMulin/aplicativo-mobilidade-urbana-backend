@@ -30,6 +30,11 @@ class NegociacaoCorridaService
         private readonly NotificarUsuarioService $notificarUsuario,
     ) {}
 
+    public static function validadeDaPropostaSegundos(): int
+    {
+        return max(15, (int) config('precificacao.negocia_proposta_validade_segundos', 20));
+    }
+
     /**
      * @return array{valor_passageiro: float, valor_motorista: float, taxa_plataforma: float}
      */
@@ -125,11 +130,15 @@ class NegociacaoCorridaService
                     'valor_proposto' => $valores['valor_passageiro'],
                     'valor_motorista' => $valores['valor_motorista'],
                     'valor_passageiro' => $valores['valor_passageiro'],
-                    'expira_em' => now()->addSeconds(max(15, (int) config('precificacao.negocia_proposta_validade_segundos', 90))),
+                    'expira_em' => now()->addSeconds(self::validadeDaPropostaSegundos()),
                     'status' => 'pendente',
                 ]
             );
         });
+
+        if ($this->aceitarAutomaticamente($proposta)) {
+            return $proposta->refresh();
+        }
 
         Avisar::semQuebrar(new CorridaAtualizada($proposta->corrida_id, 'solicitada'));
 
@@ -144,6 +153,33 @@ class NegociacaoCorridaService
         }
 
         return $proposta;
+    }
+
+    /**
+     * Com o aceite automático ligado no pedido, quem aceita a oferta do
+     * passageiro (sem pedir mais) é escolhido na hora. Se a escolha não puder
+     * ser feita (ex.: o Pix não saiu), a proposta fica na lista para ele decidir.
+     */
+    private function aceitarAutomaticamente(CorridaNegociacoes $proposta): bool
+    {
+        $corrida = Corrida::with('corrida_financeiro')->find($proposta->corrida_id);
+
+        if ($corrida === null
+            || ! $corrida->aceite_automatico
+            || $corrida->status_corrida !== 'solicitada'
+            || $corrida->status_negociacao !== 'em_negociacao'
+            || $corrida->corrida_financeiro === null
+            || abs((float) $proposta->valor_motorista - (float) $corrida->corrida_financeiro->valor_motorista) > 0.009) {
+            return false;
+        }
+
+        try {
+            $this->escolher((int) $corrida->passageiro_id, $corrida->id, $proposta->id);
+
+            return true;
+        } catch (RuntimeException) {
+            return false;
+        }
     }
 
     /**
@@ -204,6 +240,11 @@ class NegociacaoCorridaService
                     - (float) $corrida->corrida_financeiro?->valor_motorista
                 ) < 0.01,
                 'expira_em' => $proposta->expira_em?->toIso8601String(),
+                // o app conta o tempo daqui, sem depender do relógio do celular
+                'validade_segundos' => self::validadeDaPropostaSegundos(),
+                'restante_segundos' => $proposta->expira_em === null
+                    ? null
+                    : round(max(0, now()->diffInMilliseconds($proposta->expira_em, false)) / 1000, 1),
                 'motorista' => [
                     'nome' => $nome === '' ? 'Motorista' : explode(' ', $nome)[0],
                     'foto' => $proposta->motorista?->foto,

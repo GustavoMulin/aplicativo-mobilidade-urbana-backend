@@ -25,7 +25,7 @@ beforeEach(function () {
         'abacatepay.api_key' => 'abc_dev_teste',
         'abacatepay.base_url' => 'https://api.abacatepay.com',
         'abacatepay.validade_segundos' => 900,
-        'precificacao.negocia_proposta_validade_segundos' => 90,
+        'precificacao.negocia_proposta_validade_segundos' => 20,
         'precificacao.negocia_pagamento_limite_segundos' => 300,
     ]);
 
@@ -144,13 +144,14 @@ function negCotacao(Passageiro $passageiro, float $sugerido = 10.0): CotacaoCorr
     ]);
 }
 
-function negPedir(Passageiro $passageiro, float $oferta = 9.0, string $metodo = 'dinheiro'): Corrida
+function negPedir(Passageiro $passageiro, float $oferta = 9.0, string $metodo = 'dinheiro', bool $aceiteAutomatico = false): Corrida
 {
     $resposta = test()->actingAs($passageiro->user, 'jwt')->postJson('/api/corridas', [
         'cotacao_id' => negCotacao($passageiro)->id,
         'produtos_codigos' => ['negocia'],
         'valor_oferecido' => $oferta,
         'metodo_pagamento' => $metodo,
+        'aceite_automatico' => $aceiteAutomatico,
     ])->assertCreated();
 
     return Corrida::findOrFail($resposta->json('id'));
@@ -236,6 +237,20 @@ it('contraproposta do motorista aguarda a escolha do passageiro', function () {
     negPropor($motorista, $corrida, 17.0)->assertStatus(422);
     negPropor(negMotorista('Moto Rider', 'moto'), $corrida)->assertStatus(409)
         ->assertJsonPath('message', 'Seu veículo não atende a categoria pedida nesta corrida.');
+});
+
+it('a lista de propostas diz quanto tempo falta, pelo relógio do servidor', function () {
+    Carbon::setTestNow(now()->startOfSecond());
+    $passageiro = negPassageiro();
+    $corrida = negPedir($passageiro, 9.0);
+    negPropor(negMotorista(), $corrida)->assertCreated();
+    Carbon::setTestNow(now()->addSeconds(12));
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->getJson("/api/corridas/{$corrida->id}/propostas")
+        ->assertOk()
+        ->assertJsonPath('propostas.0.validade_segundos', 20)
+        ->assertJsonPath('propostas.0.restante_segundos', 8);
 });
 
 it('o passageiro vê as propostas valendo, da mais recente para a mais antiga', function () {
@@ -491,4 +506,119 @@ it('a nova oferta precisa ser maior que a atual e caber no teto', function () {
     $this->actingAs(negPassageiro()->user, 'jwt')
         ->postJson("/api/corridas/{$corrida->id}/oferta", ['valor_oferecido' => 10.0])
         ->assertNotFound();
+});
+
+it('a proposta vale 20 segundos', function () {
+    Carbon::setTestNow(now()->startOfSecond());
+    $corrida = negPedir(negPassageiro(), 9.0);
+
+    $resposta = negPropor(negMotorista(), $corrida)->assertCreated();
+
+    expect($resposta->json('expira_em'))->toBe(now()->addSeconds(20)->toIso8601String());
+});
+
+it('com o aceite automático no pedido, o primeiro motorista que aceita a oferta é escolhido', function () {
+    $passageiro = negPassageiro();
+    $corrida = negPedir($passageiro, 9.0, aceiteAutomatico: true);
+    $caro = negMotorista('Bruno Reis');
+    $primeiro = negMotorista('Ana Lima');
+    $segundo = negMotorista('Carlos Souza');
+
+    // quem pede mais que a oferta não é escolhido sozinho
+    negPropor($caro, $corrida, 10.0)->assertCreated()->assertJsonPath('status', 'pendente');
+    expect($corrida->refresh()->motorista_id)->toBeNull();
+
+    negPropor($primeiro, $corrida)->assertCreated()->assertJsonPath('status', 'aceita');
+    negPropor($segundo, $corrida)->assertStatus(409);
+
+    $corrida->refresh();
+    expect($corrida->motorista_id)->toBe($primeiro->id)
+        ->and($corrida->status_corrida)->toBe('aceita')
+        ->and($corrida->aceite_automatico)->toBeTrue()
+        ->and((float) $corrida->corrida_financeiro->valor_pago_passageiro)->toBe(9.0)
+        ->and(CorridaNegociacoes::where('motorista_id', $caro->id)->value('status'))->toBe('recusada');
+});
+
+it('sem o aceite automático, quem aceita a oferta espera a escolha do passageiro', function () {
+    $corrida = negPedir(negPassageiro(), 9.0);
+
+    negPropor(negMotorista(), $corrida)->assertCreated()->assertJsonPath('status', 'pendente');
+
+    expect($corrida->refresh()->motorista_id)->toBeNull()
+        ->and($corrida->aceite_automatico)->toBeFalse();
+});
+
+it('o pedido grava o aceite automático e recusa valor que não é verdadeiro ou falso', function () {
+    $passageiro = negPassageiro();
+
+    $this->actingAs($passageiro->user, 'jwt')->postJson('/api/corridas', [
+        'cotacao_id' => negCotacao($passageiro)->id,
+        'produtos_codigos' => ['negocia'],
+        'valor_oferecido' => 9.0,
+        'metodo_pagamento' => 'dinheiro',
+        'aceite_automatico' => 'talvez',
+    ])->assertStatus(422)->assertJsonValidationErrors('aceite_automatico');
+
+    $corrida = negPedir($passageiro, 9.0, aceiteAutomatico: true);
+
+    expect($corrida->aceite_automatico)->toBeTrue();
+});
+
+it('se a escolha automática falhar, a proposta fica na lista para o passageiro decidir', function () {
+    Http::fake([
+        'api.abacatepay.com/v2/transparents/create' => Http::response(['success' => false, 'error' => 'Invalid taxId', 'data' => null], 400),
+    ]);
+    $corrida = negPedir(negPassageiro(), 9.0, 'pix', aceiteAutomatico: true);
+    $carlos = negMotorista();
+
+    negPropor($carlos, $corrida)->assertCreated()->assertJsonPath('status', 'pendente');
+
+    $corrida->refresh();
+    expect($corrida->motorista_id)->toBeNull()
+        ->and($corrida->status_corrida)->toBe('solicitada')
+        ->and(StatusBusca::where('motorista_id', $carlos->id)->value('disponivel'))->toBeTruthy();
+});
+
+it('o motorista fica sabendo quando o passageiro cancela a corrida dele', function () {
+    $passageiro = negPassageiro();
+    $corrida = negPedir($passageiro, 9.0);
+    $carlos = negMotorista();
+    $proposta = negPropor($carlos, $corrida)->json('id');
+    $this->actingAs($passageiro->user, 'jwt')
+        ->postJson("/api/corridas/{$corrida->id}/propostas/{$proposta}/escolher")
+        ->assertOk();
+
+    $this->actingAs($carlos->user, 'jwt')
+        ->getJson('/api/minha-corrida-atual?perfil=motorista')
+        ->assertOk()
+        ->assertJsonPath('corrida.id', $corrida->id)
+        ->assertJsonPath('encerrada', null);
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->postJson("/api/corridas/{$corrida->id}/cancelar", ['motivo' => 'mudei de ideia'])
+        ->assertOk();
+
+    $this->actingAs($carlos->user, 'jwt')
+        ->getJson('/api/minha-corrida-atual?perfil=motorista')
+        ->assertOk()
+        ->assertJsonPath('corrida', null)
+        ->assertJsonPath('encerrada.id', $corrida->id)
+        ->assertJsonPath('encerrada.cancelado_por', 'passageiro')
+        ->assertJsonPath('encerrada.taxa_cancelamento', 0);
+
+    Carbon::setTestNow(now()->addMinutes(4));
+    $this->getJson('/api/minha-corrida-atual?perfil=motorista')
+        ->assertJsonPath('encerrada', null);
+});
+
+it('quem não é motorista nunca recebe o resumo de corrida cancelada', function () {
+    $passageiro = negPassageiro();
+    $corrida = negPedir($passageiro, 9.0);
+    $this->actingAs($passageiro->user, 'jwt')
+        ->postJson("/api/corridas/{$corrida->id}/cancelar", ['motivo' => 'desisti'])
+        ->assertOk();
+
+    $this->getJson('/api/minha-corrida-atual?perfil=passageiro')
+        ->assertOk()
+        ->assertJsonPath('encerrada', null);
 });
