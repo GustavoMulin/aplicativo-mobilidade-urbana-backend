@@ -44,7 +44,7 @@ function criarCorridaEspera(int $segundosDesdeChegada, float $valorPorMinuto = 0
 {
     $motorista = Motorista::create([
         'user_id' => criarUsuarioEspera('motorista')->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'numero_registro' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,
