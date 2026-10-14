@@ -22,6 +22,8 @@ use Throwable;
 
 class MotoristaCadastroController extends Controller
 {
+    public const ATIVO = 'ativo';
+
     public const APROVADO = 'aprovado';
 
     public function __construct(
@@ -92,7 +94,7 @@ class MotoristaCadastroController extends Controller
 
         $motorista = Motorista::firstOrNew(['user_id' => $request->user()->id]);
 
-        if ($motorista->exists && $motorista->status === self::APROVADO) {
+        if ($motorista->exists && $motorista->status === self::ATIVO) {
             return response()->json([
                 'message' => 'Seu cadastro já foi aprovado. Fale com o suporte para alterar a CNH.',
             ], 409);
@@ -139,7 +141,7 @@ class MotoristaCadastroController extends Controller
             ['status' => 'pendente']
         );
 
-        if ($motorista->status === self::APROVADO) {
+        if ($motorista->status === self::ATIVO) {
             return response()->json([
                 'message' => 'Seu cadastro já foi aprovado. Fale com o suporte para trocar documentos.',
             ], 409);
@@ -280,7 +282,7 @@ class MotoristaCadastroController extends Controller
                 ->where('path', 'like', 'motorista_documentos_anexos/dev-%')
                 ->delete();
 
-            $motorista->update(['status' => self::APROVADO]);
+            $motorista->update(['status' => self::ATIVO]);
 
             return $motorista;
         });

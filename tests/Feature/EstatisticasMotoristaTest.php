@@ -29,7 +29,7 @@ function motoristaEstatistica(): Motorista
 {
     return Motorista::create([
         'user_id' => usuarioEstatistica('motorista')->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'cnh_numero' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,
@@ -95,7 +95,7 @@ it('calcula a finalização só com os cancelamentos do próprio motorista e nã
 it('responde sem corridas com finalização nula', function () {
     $motorista = Motorista::create([
         'user_id' => usuarioEstatistica('motorista')->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'cnh_numero' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,
@@ -188,7 +188,7 @@ it('registra a recusa só enquanto a chamada ainda está disponível', function 
 it('soma os ganhos do dia e o saldo só com corridas finalizadas', function () {
     $motorista = Motorista::create([
         'user_id' => usuarioEstatistica('motorista')->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'cnh_numero' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,

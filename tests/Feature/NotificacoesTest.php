@@ -31,7 +31,7 @@ function usuarioNotificacao(string $papel): User
 it('avisa motorista e passageiro quando a corrida é finalizada', function () {
     $motorista = Motorista::create([
         'user_id' => usuarioNotificacao('motorista')->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'cnh_numero' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,
@@ -112,7 +112,7 @@ it('cada app vê só as notificações do seu papel, e as antigas aparecem nos d
 it('a corrida finalizada avisa cada um no seu papel', function () {
     $motorista = Motorista::create([
         'user_id' => usuarioNotificacao('motorista2')->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
     ]);
     $passageiro = Passageiro::create(['user_id' => usuarioNotificacao('passageiro2')->id]);
     $corrida = Corrida::create([

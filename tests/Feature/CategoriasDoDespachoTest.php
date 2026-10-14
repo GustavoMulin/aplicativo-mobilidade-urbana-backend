@@ -63,7 +63,7 @@ function catUsuario(string $prefixo): User
  */
 function catMotorista(?string $tipoVeiculo, array $marcas = []): Motorista
 {
-    $motorista = Motorista::create(['user_id' => catUsuario('motorista')->id, 'status' => 'aprovado']);
+    $motorista = Motorista::create(['user_id' => catUsuario('motorista')->id, 'status' => 'ativo']);
 
     if ($tipoVeiculo !== null) {
         $veiculo = Veiculo::create([
@@ -262,7 +262,7 @@ it('no Pix cobra a mais cara e devolve a diferença em crédito ao fim', functio
 });
 
 it('veículo só pode ser carro ou moto, e elétrico só carro', function () {
-    $motorista = Motorista::create(['user_id' => catUsuario('cadastro')->id, 'status' => 'aprovado']);
+    $motorista = Motorista::create(['user_id' => catUsuario('cadastro')->id, 'status' => 'ativo']);
     $dados = [
         'marca' => 'Honda',
         'modelo' => 'CG',

@@ -74,7 +74,7 @@ function motoristaDaCorridaConvite(Corrida $corrida): Motorista
 {
     $motorista = Motorista::create([
         'user_id' => usuarioConvite('Motorista Teste')->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'cnh_numero' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,

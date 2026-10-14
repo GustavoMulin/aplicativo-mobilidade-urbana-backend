@@ -38,7 +38,7 @@ function criarMotoristaHistorico(): Motorista
 {
     return Motorista::create([
         'user_id' => criarUsuarioHistorico('motorista')->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'numero_registro' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,
