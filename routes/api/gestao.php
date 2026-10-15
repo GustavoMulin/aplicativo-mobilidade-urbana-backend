@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Ajuda\TicketsController;
 use App\Http\Controllers\Auth\GestorAutenticacaoController;
+use App\Http\Controllers\Corrida\ChatCorridaController;
 use App\Http\Controllers\Gestao\CorridasController;
 use App\Http\Controllers\Gestao\FotoPerfilController;
 use App\Http\Controllers\Gestao\RegrasAcessoController;
@@ -34,6 +35,7 @@ Route::prefix('gestao')->name('gestao.')->group(function () {
             Route::get('ajuda/tickets', [TicketsController::class, 'index']);
             Route::post('ajuda/tickets', [TicketsController::class, 'store'])->middleware('throttle:10,1');
             Route::get('ajuda/tickets/{ticket}', [TicketsController::class, 'show'])->whereNumber('ticket');
+            Route::get('ajuda/tickets/{ticket}/corrida/mensagens', [ChatCorridaController::class, 'historicoTicket'])->whereNumber('ticket');
             Route::get('ajuda/tickets/{ticket}/mensagens', [TicketsController::class, 'mensagens'])->whereNumber('ticket');
             Route::get('ajuda/tickets/{ticket}/mensagens/{mensagem}/anexos/{anexo}', [TicketsController::class, 'anexo'])->whereNumber(['ticket', 'mensagem', 'anexo']);
             Route::post('ajuda/tickets/{ticket}/mensagens', [TicketsController::class, 'enviar'])->whereNumber('ticket')->middleware('throttle:60,1');
