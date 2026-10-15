@@ -1,5 +1,28 @@
 # CODEX: 21 linhas alteradas; avaliação, embarque e cancelamentos. Remover após validação.
 services:
+    # Dependencias em disco Linux evitam milhares de leituras pelo bind mount do Windows.
+    composer:
+        build:
+            context: ./docker/8.5-nginx
+            dockerfile: Dockerfile
+            args:
+                WWWGROUP: '${WWWGROUP}'
+                TIMEZONE: '${CONTAINER_TIMEZONE:-America/Porto_Velho}'
+        image: 'sail-8.5/app'
+        entrypoint: ['/bin/bash', '-ec']
+        command:
+            - |
+                composer install --no-interaction --prefer-dist
+                chown -R "${WWWUSER:-1000}:${WWWGROUP:-1000}" vendor bootstrap/cache
+        environment:
+            COMPOSER_ALLOW_SUPERUSER: '1'
+            WWWUSER: '${WWWUSER}'
+            WWWGROUP: '${WWWGROUP}'
+        volumes:
+            - '.:/var/www/html'
+            - 'sail-vendor:/var/www/html/vendor'
+        networks:
+            - sail
     laravel.test:
         build:
             context: ./docker/8.5-nginx
@@ -26,13 +49,20 @@ services:
             IGNITION_LOCAL_SITES_PATH: '${PWD}'
         volumes:
             - '.:/var/www/html'
+            - 'sail-vendor:/var/www/html/vendor'
         networks:
             - sail
         depends_on:
-            - mysql
-            - valkey
-            - rustfs
-            - mailpit
+            composer:
+                condition: service_completed_successfully
+            mysql:
+                condition: service_started
+            valkey:
+                condition: service_started
+            rustfs:
+                condition: service_started
+            mailpit:
+                condition: service_started
     scheduler:
         build:
             context: ./docker/8.5-nginx
@@ -51,11 +81,16 @@ services:
             - '8.8.8.8'
         volumes:
             - '.:/var/www/html'
+            - 'sail-vendor:/var/www/html/vendor'
         networks:
             - sail
         depends_on:
-            - mysql
-            - valkey
+            composer:
+                condition: service_completed_successfully
+            mysql:
+                condition: service_started
+            valkey:
+                condition: service_started
     mysql:
         image: 'mysql:8.4'
         ports:
@@ -142,4 +177,6 @@ volumes:
     sail-valkey:
         driver: local
     sail-rustfs:
+        driver: local
+    sail-vendor:
         driver: local

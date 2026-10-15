@@ -33,31 +33,18 @@ Para iniciar a estrutura do ambiente de desenvolvimento pela primeira vez, inici
 docker compose up -d --build
 ```
 
-Após iniciar o ambiente, faça a instalação dos pacotes PHP necessários, utilizando o container de desenvolvimento:
+O serviço `composer` instala automaticamente as dependências do `composer.lock` antes de iniciar o PHP. Ele termina com código 0 após a instalação; isso é esperado.
+
+As dependências ficam no volume Docker `sail-vendor`, compartilhado entre a API e o scheduler. Isso evita a lentidão de carregar milhares de arquivos PHP pelo compartilhamento do Windows. O código da aplicação continua na pasta do projeto, com as edições disponíveis no contêiner.
+
+Para executar comandos pelo terminal do sistema, use:
 
 ```sh
-docker compose exec -it laravel.test composer install
+docker compose exec laravel.test php artisan route:list
+docker compose exec laravel.test composer install
 ```
 
-Ao realizar a primeira instalação dos pacotes, já estará disponível para utilizar o utilitário [Laravel Sail](https://laravel.com/docs/13.x/sail).
-
-Este utilitário facilita a interação com a estrutura de desenvolvimento do Docker, além de permitir a execução de outros comandos internamente no Laravel.
-
-O binário do utilitário está localizado em `./vendor/bin/sail`.
-
-Para facilitar a execução do binário, adicione um alias do executável no `~/.zshrc` ou `~/.bashrc` (conforme o shell utilizado pelo sistema):
-
-```sh
-alias sail='sh $([ -f sail ] && echo sail || echo vendor/bin/sail)'
-```
-
-Ao adicionar o alias, feche e abra o terminal, ou execute o comando `source <caminho do arquivo>`, informando o caminho do arquivo onde foi adicionado o código do alias.
-
-> OBSERVAÇÃO: O `sail` só pode ser utilizado pelo terminal do sistema. Não funciona dentro do devcontainer.
-
-> OBSERVAÇÃO 2: O `sail` só funciona dentro da pasta do projeto.
-
-> OBSERVAÇÃO 3: O Docker não está acessível dentro do devcontainer, então não é possível manipular os containers diretamente de dentro do devcontainer, nem acessá-los. O acesso deve ser feito pelo sistema operacional.
+Depois de um pull que altere o `composer.lock`, execute o segundo comando antes de continuar. A instalação deve ocorrer dentro do contêiner, pois o `vendor` da máquina não é usado pelos serviços Docker.
 
 Para iniciar o desenvolvimento do código, com o projeto aberto no VSCode basta executar o comando do VSCode "Dev Containers: Reopen in Container".
 
@@ -72,5 +59,85 @@ Após configurar o ambiente de desenvolvimento, é necessário executar alguns c
 php artisan jwt:secret
 
 # Caso esteja no terminal do sistema
-sail artisan jwt:secret
+docker compose exec laravel.test php artisan jwt:secret
 ```
+
+
+## Transferências na Central de ajuda
+
+Tickets novos entram sem responsável, na fila de entrada do Atendimento. O perfil
+`atendimento` consulta essa entrada e os tickets atribuídos a si. Depois de
+designar para outro operador, perde o acesso ao atendimento. `gestao` e `admin`
+consultam a fila global, podem assumir qualquer atendimento e acessar a aba de histórico.
+
+| Método | Rota | Uso |
+| --- | --- | --- |
+| GET | `/api/gestao/ajuda/operadores` | Buscar operadores não arquivados com acesso à central; aceita `search`, `page` e `exclude_user_id`. |
+| POST | `/api/gestao/ajuda/tickets/{ticket}/transfer` | Designar ou transferir, com `{ "to_user_id": 2, "note": "Observação opcional" }`. |
+| POST | `/api/gestao/ajuda/tickets/{ticket}/assumir` | Assumir; Gestão e Admin também podem assumir de outro responsável. |
+| GET | `/api/gestao/ajuda/tickets/{ticket}/transferencias` | Histórico paginado, do mais recente para o mais antigo; exclusivo de Gestão e Admin. |
+
+A listagem de tickets aceita `fila=todos`, `fila=entrada` ou `fila=meus`, sempre
+respeitando o perfil. A seleção de quem está capacitado é feita pelo Atendimento;
+a lista de operadores não representa presença online.
+
+A migration `2026_10_15_140000_create_ticket_transfers_table.php` cria
+`ticket_transfers`. Os campos de operador (`transferred_by_user_id`, `from_user_id`
+e `to_user_id`) referenciam **gestores**, que são as contas do painel. O `user_id`
+do ticket continua identificando o cliente. O histórico preserva os nomes da
+época mesmo se o operador for renomeado ou excluído.
+
+Cada atribuição, transferência, assunção pela gestão e retorno à fila registra
+auditoria e mensagem de sistema na mesma transação. Os tipos são
+`queue_distribution`, `manual_transfer`, `takeover_by_manager` e `queue_return`.
+O destino é nulo no retorno à fila. Tickets resolvidos ou fechados precisam
+ser reabertos antes de transferir.
+
+Os avisos `ticket.atualizado` e `ticket.transferido` atualizam as filas pelo
+Reverb. Operadores recebem avisos sem conteúdo e consultam as mensagens pela
+API, que revalida o responsável atual. O canal do cliente continua entregando
+`ticket.mensagem`. Nenhuma mensagem posterior é entregue ao antigo operador.
+
+O histórico dedicado registra alterações feitas após instalar a migration.
+As mensagens anteriores do chat permanecem preservadas.
+
+## Contas para desenvolvimento
+
+O comando `php artisan migrate:fresh --seed` recria o banco e executa os seeders de precificação, gestores e cadastro de desenvolvimento. No terminal do Dev Container:
+
+```bash
+php artisan migrate:fresh --seed
+```
+
+| E-mail | Perfil |
+| --- | --- |
+| gestor1@example.com | Admin |
+| gestor2@example.com | Gestão |
+| gestor3@example.com | Atendimento |
+| suporte.tecnico@example.com | Suporte técnico |
+| passageiro@example.com | Passageiro |
+| motorista@example.com | Motorista |
+
+Todas essas contas fictícias usam a senha `password`. O motorista fica ativo, com veículo vinculado e CNH, CRLV, Nada Consta e seguro obrigatório aprovados, acompanhados de PDFs fictícios para testes. Passageiro e motorista entram pela API do aplicativo; os gestores entram pelo painel.
+
+O comando apaga os dados existentes. Depois da recriação, encerre as sessões abertas e entre novamente.
+
+Atendimento recebe os tickets novos e pode encaminhá-los ao Suporte técnico para investigar bugs e problemas de TI. O perfil `suporte_tecnico` acessa apenas os tickets atribuídos a ele, sem acesso à fila de entrada nem aos tickets de outros operadores. Gestão e Admin mantêm a visão global. Os perfis Atendimento e Suporte técnico possuem permissões de consulta da operação, sem alterar cadastros ou aprovar documentos.
+
+## Fila de atendimento por operador
+
+Atribuir ou transferir um ticket coloca-o em `waiting` (Aguardando atendimento). O operador deve clicar em **Iniciar atendimento**; cada operador pode manter vários tickets em atendimento ao mesmo tempo, escolhendo quais iniciar. Resolver, transferir, marcar como pendente ou devolver o ativo reorganiza as posições, sem iniciar outro ticket automaticamente. `pending` significa aguardar a resposta do cliente; quando ele responde, o ticket retorna ao fim da fila.
+
+Tickets resolvidos/fechados saem da fila de Atendimento/Suporte técnico e do filtro `fila=meus`. A fila global de Gestão/Admin preserva esses atendimentos para consulta. O cliente pode enviar informações enquanto aguarda; o operador precisa iniciar para responder (HTTP 409 em caso de tentativa fora da vez).
+
+O mesmo aviso de sistema (`tipo_sistema=fila_atendimento`) atualiza a posição. Sem ninguém à frente, informa que o operador ainda deve iniciar. Apenas após iniciar muda para "Chegou sua vez! Seu atendimento foi iniciado.". O painel exibe a espera sem cronômetro. A API mantém os campos de duração por compatibilidade e usa `fila_entrada_em` para ordenar a fila. `fila.posicao=0` identifica o ativo ou o primeiro aguardando; verifique `status` e `fila.pode_iniciar`.
+
+O evento `ticket.mensagem` entrega ao cliente o aviso com o mesmo ID para mesclar. A rota de mensagens também retorna `atualizadas` para recuperar edições depois de desconexões, sem alterar a paginação.
+
+## Mensagens não lidas
+
+A migration `2026_10_15_180000_create_ticket_leituras_table.php` cria `ticket_leituras`, com cursor por ticket/gestor. Execute `php artisan migrate` no terminal do container. A listagem da gestão retorna `mensagens_nao_lidas` (somente mensagens do cliente) e `ultima_mensagem_cliente_id`.
+
+`POST /api/gestao/ajuda/tickets/{ticket}/leitura` recebe `{ "ultima_mensagem_id": 123 }` e marca somente o intervalo visto. O cursor nunca regride; ler em uma conta não limpa o contador de outra. O painel marca quando a conversa está na aba Mensagens e a janela está visível/com foco. O evento `ticket.lido` atualiza outras sessões da mesma conta no canal privado `ajuda.operador.{id}`, sem provocar atualizações na fila de outros operadores.
+
+A identificação da conta substitui o botão Novo ticket no cabeçalho da Central; a criação de tickets continua disponível pela API.

@@ -58,6 +58,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             PrecificacaoSeeder::class,
             GestoresSeeder::class,
+            CadastroDesenvolvimentoSeeder::class,
         ]);
         Cidade::factory()->create([
             'id' => 4382,
