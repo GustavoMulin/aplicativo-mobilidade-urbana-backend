@@ -12,4 +12,5 @@ Route::get('ajuda/tickets', [TicketsController::class, 'index']);
 Route::post('ajuda/tickets', [TicketsController::class, 'store'])->middleware('throttle:10,1,chamados-ajuda');
 Route::get('ajuda/tickets/{ticket}', [TicketsController::class, 'show'])->whereNumber('ticket');
 Route::get('ajuda/tickets/{ticket}/mensagens', [TicketsController::class, 'mensagens'])->whereNumber('ticket');
+Route::get('ajuda/tickets/{ticket}/mensagens/{mensagem}/anexos/{anexo}', [TicketsController::class, 'anexo'])->whereNumber(['ticket', 'mensagem', 'anexo']);
 Route::post('ajuda/tickets/{ticket}/mensagens', [TicketsController::class, 'enviar'])->whereNumber('ticket')->middleware('throttle:60,1');

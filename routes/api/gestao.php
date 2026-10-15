@@ -35,6 +35,7 @@ Route::prefix('gestao')->name('gestao.')->group(function () {
             Route::post('ajuda/tickets', [TicketsController::class, 'store'])->middleware('throttle:10,1');
             Route::get('ajuda/tickets/{ticket}', [TicketsController::class, 'show'])->whereNumber('ticket');
             Route::get('ajuda/tickets/{ticket}/mensagens', [TicketsController::class, 'mensagens'])->whereNumber('ticket');
+            Route::get('ajuda/tickets/{ticket}/mensagens/{mensagem}/anexos/{anexo}', [TicketsController::class, 'anexo'])->whereNumber(['ticket', 'mensagem', 'anexo']);
             Route::post('ajuda/tickets/{ticket}/mensagens', [TicketsController::class, 'enviar'])->whereNumber('ticket')->middleware('throttle:60,1');
             Route::post('ajuda/tickets/{ticket}/leitura', [TicketsController::class, 'leitura'])->whereNumber('ticket')->middleware('throttle:120,1');
             Route::post('ajuda/tickets/{ticket}/assumir', [TicketsController::class, 'assumir'])->whereNumber('ticket');
