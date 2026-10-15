@@ -33,31 +33,18 @@ Para iniciar a estrutura do ambiente de desenvolvimento pela primeira vez, inici
 docker compose up -d --build
 ```
 
-Após iniciar o ambiente, faça a instalação dos pacotes PHP necessários, utilizando o container de desenvolvimento:
+O serviço `composer` instala automaticamente as dependências do `composer.lock` antes de iniciar o PHP. Ele termina com código 0 após a instalação; isso é esperado.
+
+As dependências ficam no volume Docker `sail-vendor`, compartilhado entre a API e o scheduler. Isso evita a lentidão de carregar milhares de arquivos PHP pelo compartilhamento do Windows. O código da aplicação continua na pasta do projeto, com as edições disponíveis no contêiner.
+
+Para executar comandos pelo terminal do sistema, use:
 
 ```sh
-docker compose exec -it laravel.test composer install
+docker compose exec laravel.test php artisan route:list
+docker compose exec laravel.test composer install
 ```
 
-Ao realizar a primeira instalação dos pacotes, já estará disponível para utilizar o utilitário [Laravel Sail](https://laravel.com/docs/13.x/sail).
-
-Este utilitário facilita a interação com a estrutura de desenvolvimento do Docker, além de permitir a execução de outros comandos internamente no Laravel.
-
-O binário do utilitário está localizado em `./vendor/bin/sail`.
-
-Para facilitar a execução do binário, adicione um alias do executável no `~/.zshrc` ou `~/.bashrc` (conforme o shell utilizado pelo sistema):
-
-```sh
-alias sail='sh $([ -f sail ] && echo sail || echo vendor/bin/sail)'
-```
-
-Ao adicionar o alias, feche e abra o terminal, ou execute o comando `source <caminho do arquivo>`, informando o caminho do arquivo onde foi adicionado o código do alias.
-
-> OBSERVAÇÃO: O `sail` só pode ser utilizado pelo terminal do sistema. Não funciona dentro do devcontainer.
-
-> OBSERVAÇÃO 2: O `sail` só funciona dentro da pasta do projeto.
-
-> OBSERVAÇÃO 3: O Docker não está acessível dentro do devcontainer, então não é possível manipular os containers diretamente de dentro do devcontainer, nem acessá-los. O acesso deve ser feito pelo sistema operacional.
+Depois de um pull que altere o `composer.lock`, execute o segundo comando antes de continuar. A instalação deve ocorrer dentro do contêiner, pois o `vendor` da máquina não é usado pelos serviços Docker.
 
 Para iniciar o desenvolvimento do código, com o projeto aberto no VSCode basta executar o comando do VSCode "Dev Containers: Reopen in Container".
 
@@ -72,5 +59,5 @@ Após configurar o ambiente de desenvolvimento, é necessário executar alguns c
 php artisan jwt:secret
 
 # Caso esteja no terminal do sistema
-sail artisan jwt:secret
+docker compose exec laravel.test php artisan jwt:secret
 ```

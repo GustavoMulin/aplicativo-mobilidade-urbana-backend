@@ -27,6 +27,7 @@
         }
     },
     "remoteUser": "sail",
+    "postStartCommand": "git config --global --replace-all safe.directory /var/www/html '^/var/www/html$'",
     "postCreateCommand": "chown -R 1000:1000 /var/www/html 2>/dev/null || true"
     // "forwardPorts": [],
     // "runServices": [],
