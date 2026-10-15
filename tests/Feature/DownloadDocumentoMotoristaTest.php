@@ -13,18 +13,21 @@ beforeEach(function () {
     $this->usuario = User::factory()->create();
     $motorista = Motorista::create(['user_id' => $this->usuario->id, 'status' => 'pendente']);
     Storage::disk('motorista_documentos_anexos')->put('frente.png', 'Conteudo da frente');
-    Storage::disk('motorista_documentos_anexos')->put('verso.png', 'Conteudo do verso');
+    // o verso é um registro próprio, com o nome da frente mais _verso
+    Storage::disk('motorista_documentos_anexos')->put('frente_verso.png', 'Conteudo do verso');
     $this->documento = MotoristaDocumento::create([
-        'motorista_id' => $motorista->id, 'tipo_documento' => 'cnh',
+        'motorista_id' => $motorista->id, 'tipo_documento' => 'cnh', 'ordem' => 0,
         'name' => 'frente.png', 'type' => 'png', 'mime_type' => 'image/png', 'size' => 17,
         'path' => 'motorista_documentos_anexos/frente.png',
         'url' => 'http://localhost/motorista_documentos_anexos/frente.png',
         'status' => 'em_analise',
-        'verso' => [
-            'name' => 'verso.png', 'type' => 'png', 'mime_type' => 'image/png', 'size' => 16,
-            'path' => 'motorista_documentos_anexos/verso.png',
-            'url' => 'http://localhost/motorista_documentos_anexos/verso.png',
-        ],
+    ]);
+    $this->verso = MotoristaDocumento::create([
+        'motorista_id' => $motorista->id, 'tipo_documento' => 'cnh', 'ordem' => 1,
+        'name' => 'verso.png', 'type' => 'png', 'mime_type' => 'image/png', 'size' => 16,
+        'path' => 'motorista_documentos_anexos/frente_verso.png',
+        'url' => 'http://localhost/motorista_documentos_anexos/frente_verso.png',
+        'status' => 'em_analise',
     ]);
 });
 
@@ -40,8 +43,9 @@ it('baixa PDF sem verso e retorna 404 ao pedir o verso ausente', function () {
     Storage::disk('motorista_documentos_anexos')->put('cnh.pdf', '%PDF-1.7');
     $this->documento->update([
         'name' => 'cnh.pdf', 'type' => 'pdf', 'mime_type' => 'application/pdf',
-        'path' => 'motorista_documentos_anexos/cnh.pdf', 'verso' => null,
+        'path' => 'motorista_documentos_anexos/cnh.pdf',
     ]);
+    $this->verso->delete();
     $response = $this->actingAs($this->usuario, 'jwt')
         ->get('/api/motorista-documentos/'.$this->documento->id.'/download');
     $response->assertOk()->assertDownload('cnh.pdf')->assertHeader('Content-Type', 'application/pdf');

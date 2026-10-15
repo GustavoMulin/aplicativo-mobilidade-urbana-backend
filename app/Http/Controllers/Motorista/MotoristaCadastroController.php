@@ -129,8 +129,15 @@ class MotoristaCadastroController extends Controller
         $informacoesService->normalizar($request);
         $crlvService = app(CrlvVeiculoService::class);
         $crlvService->normalizar($request);
+        // o app envia só o arquivo do CRLV e do Nada Consta; a gestão confere e
+        // completa os dados no painel antes de aprovar
+        $semDados = in_array($request->input('tipo_documento'), [TipoDocumentoMotorista::CRLV->value, TipoDocumentoMotorista::NADA_CONSTA->value], true)
+            && ! $request->filled('informacoes_complementares');
+        $regrasDasInformacoes = $semDados
+            ? ['veiculo_id' => $request->input('tipo_documento') === TipoDocumentoMotorista::CRLV->value ? 'nullable|integer' : 'prohibited']
+            : $informacoesService->regras($request);
         $dados = $request->validate([
-            ...$informacoesService->regras($request),
+            ...$regrasDasInformacoes,
             'tipo_documento' => ['required', Rule::enum(TipoDocumentoMotorista::class)],
             'arquivo' => 'required|file|mimes:jpg,jpeg,png,webp,heic,heif,gif,pdf|max:10240',
             'arquivo_verso' => $this->armazenarAnexoMotoristaService->regrasVerso($request, 'jpg,jpeg,png,webp,heic,heif,gif', 10240),
@@ -149,18 +156,25 @@ class MotoristaCadastroController extends Controller
 
         if ($dados['tipo_documento'] === 'crlv' && isset($dados['veiculo_id'])) {
             $veiculo = $crlvService->veiculoVinculado($motorista->id, (int) $dados['veiculo_id']);
-            $crlvService->validar($veiculo, $dados['informacoes_complementares']);
+            if (! $semDados) {
+                $crlvService->validar($veiculo, $dados['informacoes_complementares']);
+            }
         }
         $anexo = $this->armazenarAnexoMotoristaService->salvarEnvio($request);
         try {
-            [$documento, $situacao] = DB::transaction(function () use ($motorista, $dados, $anexo): array {
+            [$documento, $situacao] = DB::transaction(function () use ($motorista, $dados, $anexo, $semDados): array {
                 $motorista = Motorista::lockForUpdate()->findOrFail($motorista->id);
                 if ($dados['tipo_documento'] === 'cnh' && isset($dados['informacoes_complementares'])) {
                     $motorista->update($dados['informacoes_complementares']);
                 }
-                $veiculo = $dados['tipo_documento'] === 'crlv'
-                    ? app(CrlvVeiculoService::class)->registrarOuAtualizar($motorista, $dados['informacoes_complementares'], $dados['veiculo_id'] ?? null)
-                    : null;
+                $veiculo = match (true) {
+                    $dados['tipo_documento'] !== 'crlv' => null,
+                    // sem os dados, o CRLV fica no veículo escolhido ou no veículo do motorista
+                    $semDados => isset($dados['veiculo_id'])
+                        ? app(CrlvVeiculoService::class)->veiculoVinculado($motorista->id, (int) $dados['veiculo_id'])
+                        : Veiculo::whereKey(MotoristaVeiculo::where('motorista_id', $motorista->id)->orderBy('id')->value('veiculo_id'))->first(),
+                    default => app(CrlvVeiculoService::class)->registrarOuAtualizar($motorista, $dados['informacoes_complementares'], $dados['veiculo_id'] ?? null),
+                };
 
                 $documento = $this->armazenarAnexoMotoristaService->registrarEnvio([
                     'motorista_id' => $motorista->id,

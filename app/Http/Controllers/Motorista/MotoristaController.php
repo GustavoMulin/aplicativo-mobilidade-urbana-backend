@@ -164,6 +164,8 @@ class MotoristaController extends Controller
             'placa.unique' => 'Esta placa já está cadastrada.',
             'renavam.digits' => 'O RENAVAM deve ter 11 números.',
             'renavam.unique' => 'Este RENAVAM já está cadastrado.',
+            'cpf_cnpj_proprietario.required' => 'Informe o CPF ou CNPJ do proprietário, como está no documento do veículo.',
+            'cpf_cnpj_proprietario.regex' => 'Informe um CPF (11 números) ou CNPJ (14 números).',
         ]);
 
         $motorista = Motorista::where('user_id', $request->user()->id)->first();
