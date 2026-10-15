@@ -230,7 +230,8 @@ it('contraproposta do motorista aguarda a escolha do passageiro', function () {
 
     $oferta = app(DespachoCorridaService::class)->ofertasPara($motorista)->first();
     expect($oferta['minha_proposta']['valor_motorista'])->toBe(10.0)
-        ->and($oferta['minha_proposta']['status'])->toBe('pendente');
+        ->and($oferta['minha_proposta']['status'])->toBe('pendente')
+        ->and($oferta['minha_proposta']['validade_segundos'])->toBe(20);
 
     negPropor($motorista, $corrida, 8.0)->assertStatus(422)
         ->assertJsonPath('message', 'A proposta não pode ser menor que a oferta do passageiro.');
