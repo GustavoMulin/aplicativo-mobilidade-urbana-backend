@@ -32,6 +32,13 @@ class GestoresSeeder extends Seeder
                 'data_nascimento' => '1994-09-10',
                 'email' => 'gestor3@example.com',
             ],
+            [
+                'name' => 'Suporte técnico de teste',
+                'perfil_acesso' => 'suporte_tecnico',
+                'cpf' => '39053344705',
+                'data_nascimento' => '1993-03-15',
+                'email' => 'suporte.tecnico@example.com',
+            ],
         ];
 
         DB::transaction(function () use ($gestores): void {

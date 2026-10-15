@@ -24,6 +24,21 @@ class Gestor extends Authenticatable implements JWTSubject
         return in_array($permissao, $this->permissoes, true);
     }
 
+    public function visualizaTodosTickets(): bool
+    {
+        return $this->pode('ajuda.gerenciar') && in_array($this->perfil_acesso, ['gestao', 'admin'], true);
+    }
+
+    public function visualizaEntradaTickets(): bool
+    {
+        return $this->pode('ajuda.gerenciar') && ($this->visualizaTodosTickets() || $this->perfil_acesso === 'atendimento');
+    }
+
+    public function podeAcessarTicket(ChamadoAjuda $ticket): bool
+    {
+        return $this->pode('ajuda.gerenciar') && ($this->visualizaTodosTickets() || ($ticket->gestor_responsavel_id === null && $this->visualizaEntradaTickets()) || $ticket->gestor_responsavel_id === $this->id);
+    }
+
     protected function permissoes(): Attribute
     {
         return Attribute::get(fn () => PerfilAcessoGestor::tryFrom((string) $this->perfil_acesso)?->permissoes() ?? []);
