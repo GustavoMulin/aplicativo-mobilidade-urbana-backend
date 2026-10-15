@@ -30,6 +30,13 @@ return [
 
     'disks' => [
 
+        'ticket_anexos' => [
+            'driver' => 'local',
+            'root' => env('TICKET_ANEXOS_ROOT', storage_path('app/private/ticket_anexos')),
+            'visibility' => 'private',
+            'throw' => true,
+        ],
+
         'local' => [
             'driver' => 'local',
             'root' => storage_path('app/private'),
