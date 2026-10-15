@@ -622,3 +622,53 @@ it('quem não é motorista nunca recebe o resumo de corrida cancelada', function
         ->assertOk()
         ->assertJsonPath('encerrada', null);
 });
+
+it('escolhido num Negocia, as outras propostas do motorista são canceladas', function () {
+    $primeiro = negPassageiro();
+    $segundo = negPassageiro();
+    $corrida = negPedir($primeiro, 9.0);
+    $outra = negPedir($segundo, 9.0);
+    $carlos = negMotorista();
+    $escolhida = negPropor($carlos, $corrida)->json('id');
+    $esperando = negPropor($carlos, $outra)->json('id');
+
+    $this->actingAs($primeiro->user, 'jwt')
+        ->postJson("/api/corridas/{$corrida->id}/propostas/{$escolhida}/escolher")
+        ->assertOk();
+
+    expect(CorridaNegociacoes::find($esperando)->status)->toBe('cancelada');
+    $this->actingAs($segundo->user, 'jwt')
+        ->getJson("/api/corridas/{$outra->id}/propostas")
+        ->assertOk()
+        ->assertJsonCount(0, 'propostas');
+});
+
+it('aceitar uma corrida normal cancela as propostas do Negocia que o motorista tinha mandado', function () {
+    $carlos = negMotorista();
+    $ana = negMotorista('Ana Lima');
+    $negocia = negPedir(negPassageiro(), 9.0);
+    $propostaCarlos = negPropor($carlos, $negocia)->json('id');
+    $propostaAna = negPropor($ana, $negocia)->json('id');
+
+    $normal = Corrida::create([
+        'codigo_corrida' => 'NORMAL-'.Str::upper(Str::random(8)),
+        'passageiro_id' => negPassageiro()->id,
+        'status_corrida' => 'solicitada',
+        'tempo_solicitacao' => now(),
+        'distancia_total' => 4,
+        'metodo_pagamento' => 'dinheiro',
+        'status_pagamento' => 'pendente',
+    ]);
+    $normal->corrida_destinos()->createMany([
+        ['nome_local' => 'Embarque', 'tipo' => 'origem', 'ordem' => 0, 'endereco' => 'Embarque', 'latitude' => -8.7600, 'longitude' => -63.9004],
+        ['nome_local' => 'Destino', 'tipo' => 'destino', 'ordem' => 1, 'endereco' => 'Destino', 'latitude' => -8.7400, 'longitude' => -63.8800],
+    ]);
+    $normal->corrida_financeiro()->create(['valor_motorista' => 9.0, 'valor_pago_passageiro' => 10.0, 'metodo_pagamento' => 'dinheiro']);
+
+    $this->actingAs($carlos->user, 'jwt')
+        ->postJson("/api/motorista/corridas/{$normal->id}/aceitar")
+        ->assertOk();
+
+    expect(CorridaNegociacoes::find($propostaCarlos)->status)->toBe('cancelada')
+        ->and(CorridaNegociacoes::find($propostaAna)->status)->toBe('pendente');
+});
