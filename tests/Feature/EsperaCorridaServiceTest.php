@@ -6,10 +6,12 @@ use App\Models\Corrida;
 use App\Models\CorridaDestino;
 use App\Models\CorridaFinanceiro;
 use App\Models\Motorista;
+use App\Models\MotoristaVeiculo;
 use App\Models\Passageiro;
 use App\Models\StatusBusca;
 use App\Models\Tarifa;
 use App\Models\User;
+use App\Models\Veiculo;
 use App\Services\ContabilizarEsperaCorridaService;
 use App\Services\DespachoCorridaService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -50,6 +52,14 @@ function criarCorridaEspera(int $segundosDesdeChegada, float $valorPorMinuto = 0
         'cnh_expiracao' => null,
         'ear' => null,
     ]);
+    // ao fim da espera o motorista volta a ficar online, o que exige veículo
+    $veiculo = Veiculo::create([
+        'marca' => 'Chevrolet', 'modelo' => 'Onix', 'ano_fabricacao' => 2023, 'ano_modelo' => 2023,
+        'cor' => 'Prata', 'placa' => 'ESP'.random_int(1000, 9999),
+        'renavam' => (string) random_int(10000000000, 99999999999),
+        'cpf_cnpj_proprietario' => '12345678909', 'categoria' => 'carro', 'status' => 'aprovado', 'uf' => 'RO',
+    ]);
+    MotoristaVeiculo::create(['motorista_id' => $motorista->id, 'veiculo_id' => $veiculo->id]);
     $passageiro = Passageiro::create([
         'user_id' => criarUsuarioEspera('passageiro')->id,
         'media_avaliacao' => null,
