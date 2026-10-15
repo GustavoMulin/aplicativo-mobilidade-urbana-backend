@@ -1,12 +1,17 @@
 <?php
 
+use App\Http\Controllers\Ajuda\TicketsController;
 use App\Http\Controllers\Auth\GestorAutenticacaoController;
 use App\Http\Controllers\Corrida\CorridaController;
 use App\Http\Controllers\Gestao\FotoPerfilController;
+use App\Http\Controllers\Gestao\RegrasAcessoController;
+use App\Http\Controllers\Gestao\VeiculoUsuariosController;
 use App\Http\Controllers\Gestor\GestorController;
 use App\Http\Controllers\Motorista\MotoristaController;
 use App\Http\Controllers\Motorista\MotoristaDocumentoController;
 use App\Http\Controllers\Usuario\UsuarioController;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('gestao')->name('gestao.')->group(function () {
@@ -19,38 +24,56 @@ Route::prefix('gestao')->name('gestao.')->group(function () {
         Route::get('usuario-logado', [GestorAutenticacaoController::class, 'usuarioLogado']);
         Route::post('auth/logout', [GestorAutenticacaoController::class, 'logout'])->name('auth.logout');
 
-        foreach (['motorista' => 'motoristas', 'passageiro' => 'passageiros', 'gestor' => 'gestores'] as $tipo => $recurso) {
-            Route::post($recurso.'/{perfil}/foto', [FotoPerfilController::class, 'atualizar'])
-                ->whereNumber('perfil')->defaults('tipo', $tipo);
-        }
+        Route::post('broadcasting/auth', fn (Request $request) => Broadcast::auth($request))->middleware('throttle:120,1');
 
-        Route::get('gestores/arquivados', [GestorController::class, 'arquivados']);
-        Route::post('gestores/{gestor}/restaurar', [GestorController::class, 'restaurar'])->whereNumber('gestor');
-        Route::apiResource('gestores', GestorController::class)->parameters(['gestores' => 'gestor']);
-        Route::apiResource('users', UsuarioController::class)->only(['index', 'store', 'show', 'update']);
-        Route::delete('usuario-remover-foto-perfil/{id}', [UsuarioController::class, 'removerFotoPerfil']);
-        Route::post('usuario-arquivar', [UsuarioController::class, 'usuarioArquivar']);
-        Route::post('usuario-deletar', [UsuarioController::class, 'usuarioDeletar']);
-        Route::post('usuario-restaurar', [UsuarioController::class, 'usuarioRestaurar']);
-        Route::get('usuarios-arquivados', [UsuarioController::class, 'usuariosArquivados']);
-        Route::put('usuario-alterar-foto-perfil/{id}', [UsuarioController::class, 'alterarFotoPerfil']);
+        Route::middleware('permissao.gestao')->group(function () {
+            Route::get('ajuda/solicitantes', [TicketsController::class, 'solicitantes']);
+            Route::get('ajuda/tickets', [TicketsController::class, 'index']);
+            Route::post('ajuda/tickets', [TicketsController::class, 'store'])->middleware('throttle:10,1');
+            Route::get('ajuda/tickets/{ticket}', [TicketsController::class, 'show'])->whereNumber('ticket');
+            Route::get('ajuda/tickets/{ticket}/mensagens', [TicketsController::class, 'mensagens'])->whereNumber('ticket');
+            Route::post('ajuda/tickets/{ticket}/mensagens', [TicketsController::class, 'enviar'])->whereNumber('ticket')->middleware('throttle:60,1');
+            Route::post('ajuda/tickets/{ticket}/assumir', [TicketsController::class, 'assumir'])->whereNumber('ticket');
+            Route::patch('ajuda/tickets/{ticket}/status', [TicketsController::class, 'status'])->whereNumber('ticket');
+            Route::get('administracao/regras', [RegrasAcessoController::class, 'index']);
+            Route::get('administracao/regras/{perfil}/gestores', [RegrasAcessoController::class, 'gestores']);
+            Route::put('administracao/regras/{perfil}/gestores', [RegrasAcessoController::class, 'atribuir']);
 
-        Route::get('motorista-veiculos/{motoristaId}', [MotoristaController::class, 'motoristaVeiculos']);
-        Route::apiResource('motoristas', MotoristaController::class);
-        Route::post('adicionar-veiculo-ao-motorista', [MotoristaController::class, 'adicionarVeiculoAoMotorista']);
-        Route::get('motorista-documentos/tipos', [MotoristaDocumentoController::class, 'tipos']);
-        Route::get('motorista-documentos/motivos-reprovacao', [MotoristaDocumentoController::class, 'motivosReprovacao']);
-        Route::get('motorista-documentos/{motoristaId}/resumo', [MotoristaDocumentoController::class, 'resumo']);
-        Route::get('motorista-documentos/{motoristaDocumentoId}/download', [MotoristaDocumentoController::class, 'baixar']);
-        Route::apiResource('motorista-documentos', MotoristaDocumentoController::class);
-        Route::put('mudar-status-documento/{motoristaDocumentoId}', [MotoristaDocumentoController::class, 'mudarStatusDocumento']);
-        Route::apiResource('corridas', CorridaController::class)->only(['index', 'show']);
+            foreach (['motorista' => 'motoristas', 'passageiro' => 'passageiros', 'gestor' => 'gestores'] as $tipo => $recurso) {
+                Route::post($recurso.'/{perfil}/foto', [FotoPerfilController::class, 'atualizar'])
+                    ->whereNumber('perfil')->defaults('tipo', $tipo);
+            }
 
-        require __DIR__.'/veiculo.php';
-        require __DIR__.'/passageiro.php';
-        require __DIR__.'/tarifa.php';
-        require __DIR__.'/produto.php';
-        require __DIR__.'/publicidade.php';
-        require __DIR__.'/estimativa.php';
+            Route::get('gestores/arquivados', [GestorController::class, 'arquivados']);
+            Route::post('gestores/{gestor}/restaurar', [GestorController::class, 'restaurar'])->whereNumber('gestor');
+            Route::apiResource('gestores', GestorController::class)->parameters(['gestores' => 'gestor']);
+            Route::apiResource('users', UsuarioController::class)->only(['index', 'store', 'show', 'update']);
+            Route::delete('usuario-remover-foto-perfil/{id}', [UsuarioController::class, 'removerFotoPerfil']);
+            Route::post('usuario-arquivar', [UsuarioController::class, 'usuarioArquivar']);
+            Route::post('usuario-deletar', [UsuarioController::class, 'usuarioDeletar']);
+            Route::post('usuario-restaurar', [UsuarioController::class, 'usuarioRestaurar']);
+            Route::get('usuarios-arquivados', [UsuarioController::class, 'usuariosArquivados']);
+            Route::put('usuario-alterar-foto-perfil/{id}', [UsuarioController::class, 'alterarFotoPerfil']);
+
+            Route::get('motorista-veiculos/{motoristaId}', [MotoristaController::class, 'motoristaVeiculos']);
+            Route::apiResource('motoristas', MotoristaController::class);
+            Route::post('adicionar-veiculo-ao-motorista', [MotoristaController::class, 'adicionarVeiculoAoMotorista']);
+            Route::get('motorista-documentos/tipos', [MotoristaDocumentoController::class, 'tipos']);
+            Route::get('motorista-documentos/motivos-reprovacao', [MotoristaDocumentoController::class, 'motivosReprovacao']);
+            Route::get('motorista-documentos/{motoristaId}/resumo', [MotoristaDocumentoController::class, 'resumo']);
+            Route::get('motorista-documentos/{motoristaDocumentoId}/download', [MotoristaDocumentoController::class, 'baixar']);
+            Route::apiResource('motorista-documentos', MotoristaDocumentoController::class);
+            Route::put('mudar-status-documento/{motoristaDocumentoId}', [MotoristaDocumentoController::class, 'mudarStatusDocumento']);
+            Route::apiResource('corridas', CorridaController::class)->only(['index', 'show']);
+
+            Route::get('veiculos/{veiculoId}/usuarios', VeiculoUsuariosController::class)->whereNumber('veiculoId');
+
+            require __DIR__.'/veiculo.php';
+            require __DIR__.'/passageiro.php';
+            require __DIR__.'/tarifa.php';
+            require __DIR__.'/produto.php';
+            require __DIR__.'/publicidade.php';
+            require __DIR__.'/estimativa.php';
+        });
     });
 });

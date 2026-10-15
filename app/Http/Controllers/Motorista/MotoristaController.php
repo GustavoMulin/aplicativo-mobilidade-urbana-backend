@@ -7,11 +7,12 @@ namespace App\Http\Controllers\Motorista;
 use App\Http\Controllers\Controller;
 use App\Models\Motorista;
 use App\Models\MotoristaVeiculo;
-use App\Models\StatusBusca;
 use App\Models\Veiculo;
 use App\Services\AtualizarSituacaoMotoristaService;
 use App\Services\CadastrarPerfilUsuarioService;
 use App\Services\CarteiraMotoristaService;
+use App\Services\CompartilhamentoVeiculoService;
+use App\Services\DocumentosMotoristaService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -134,6 +135,7 @@ class MotoristaController extends Controller
             'cor' => trim((string) $request->input('cor')),
             'placa' => strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '', (string) $request->input('placa'))),
             'renavam' => preg_replace('/\D/', '', (string) $request->input('renavam')),
+            'cpf_cnpj_proprietario' => preg_replace('/\D/', '', (string) $request->input('cpf_cnpj_proprietario')),
             'categoria' => strtolower(trim((string) $request->input('categoria'))),
             'uf' => strtoupper(trim((string) $request->input('uf'))),
         ]);
@@ -148,6 +150,8 @@ class MotoristaController extends Controller
             'placa' => ['required', 'string', 'regex:/^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$/', Rule::unique('veiculos', 'placa')],
             'renavam' => ['required', 'digits:11', Rule::unique('veiculos', 'renavam')],
             'chassi' => ['nullable', 'string', 'regex:/^[A-HJ-NPR-Z0-9]{17}$/'],
+            'cpf_cnpj_proprietario' => ['required', 'string', 'regex:/^(?:[0-9]{11}|[0-9]{14})$/'],
+            'nome_proprietario' => 'nullable|string|max:255',
             'categoria' => 'required|string|in:carro,moto',
             // não existe moto elétrica nas categorias
             'eletrico' => 'sometimes|boolean|declined_if:categoria,moto',
@@ -179,13 +183,9 @@ class MotoristaController extends Controller
                 'status' => 'aprovado',
             ]);
 
-            MotoristaVeiculo::create([
-                'motorista_id' => $motorista->id,
-                'veiculo_id' => $veiculo->id,
-            ]);
+            app(CompartilhamentoVeiculoService::class)->vincular($motorista, $veiculo);
 
-            StatusBusca::where('motorista_id', $motorista->id)
-                ->update(['veiculo_id' => $veiculo->id]);
+            // O veículo usado na sessão atual permanece selecionado.
 
             app(AtualizarSituacaoMotoristaService::class)->executar($motorista);
 
@@ -292,8 +292,14 @@ class MotoristaController extends Controller
             'veiculo_id' => 'required|integer|exists:veiculos,id',
         ]);
 
-        $motoristaVeiculo = MotoristaVeiculo::firstOrCreate($dados);
-        app(AtualizarSituacaoMotoristaService::class)->executar(Motorista::findOrFail($dados['motorista_id']));
+        $motoristaVeiculo = DB::transaction(function () use ($dados): MotoristaVeiculo {
+            $motorista = Motorista::whereHas('user')->lockForUpdate()->findOrFail($dados['motorista_id']);
+            Veiculo::lockForUpdate()->findOrFail($dados['veiculo_id']);
+            $vinculo = app(CompartilhamentoVeiculoService::class)->vincular($motorista, Veiculo::findOrFail($dados['veiculo_id']));
+            app(AtualizarSituacaoMotoristaService::class)->executar($motorista);
+
+            return $vinculo;
+        });
 
         return response()->json([
             'success' => true,
@@ -307,13 +313,14 @@ class MotoristaController extends Controller
      */
     public function motoristaVeiculos(int $motoristaid): JsonResponse
     {
-        Motorista::findOrFail($motoristaid);
+        $motorista = Motorista::findOrFail($motoristaid);
         $veiculos = MotoristaVeiculo::with(['motorista', 'veiculo.ultimoCrlv'])
             ->where('motorista_id', $motoristaid)
             ->whereHas('veiculo')->paginate();
 
         return response()->json([
             ...$veiculos->toArray(),
+            'veiculos' => app(DocumentosMotoristaService::class)->veiculos($motorista),
             'possui_veiculo_cadastrado' => MotoristaVeiculo::where('motorista_id', $motoristaid)->exists(),
         ]);
     }

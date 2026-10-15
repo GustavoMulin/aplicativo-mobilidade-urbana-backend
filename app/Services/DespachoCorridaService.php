@@ -51,16 +51,7 @@ class DespachoCorridaService
         ?float $longitude,
         ?int $veiculoId
     ): StatusBusca {
-        return StatusBusca::updateOrCreate(
-            ['motorista_id' => $motorista->id],
-            [
-                'disponivel' => $disponivel,
-                'latitude' => $latitude,
-                'longitude' => $longitude,
-                'veiculo_id' => $veiculoId ?? $this->veiculoPadrao($motorista),
-                'visto_em' => now(),
-            ]
-        );
+        return app(CompartilhamentoVeiculoService::class)->atualizarDisponibilidade($motorista, $disponivel, $latitude, $longitude, $veiculoId);
     }
 
     /**
@@ -100,14 +91,7 @@ class DespachoCorridaService
         float $latitude,
         float $longitude
     ): StatusBusca {
-        $status = StatusBusca::updateOrCreate(
-            ['motorista_id' => $motorista->id],
-            [
-                'latitude' => $latitude,
-                'longitude' => $longitude,
-                'visto_em' => now(),
-            ]
-        );
+        $status = app(CompartilhamentoVeiculoService::class)->atualizarPosicao($motorista, $latitude, $longitude);
 
         $corridaId = Corrida::where('motorista_id', $motorista->id)
             ->whereIn('status_corrida', self::STATUS_ATIVOS_MOTORISTA)
@@ -290,12 +274,17 @@ class DespachoCorridaService
             throw new RuntimeException('Você já está em uma corrida.', 409);
         }
 
+        $selecionado = StatusBusca::where('motorista_id', $motorista->id)->value('veiculo_id') ?? $this->veiculoPadrao($motorista);
+        app(CompartilhamentoVeiculoService::class)->validarParaCorrida($motorista, $selecionado);
         $status = StatusBusca::where('motorista_id', $motorista->id)
             ->lockForUpdate()
             ->first();
 
         if ($status === null || ! $status->disponivel) {
             throw new RuntimeException('Você precisa estar disponível para aceitar corridas.', 409);
+        }
+        if ($status->veiculo_id !== null && $status->veiculo_id !== $selecionado) {
+            throw new RuntimeException('O veículo selecionado mudou. Atualize a disponibilidade antes de aceitar.', 409);
         }
 
         if ($this->onlineExpirou($status)) {
@@ -405,8 +394,7 @@ class DespachoCorridaService
             }
 
             if ($regra['para'] === 'finalizada') {
-                StatusBusca::where('motorista_id', $motorista->id)
-                    ->update(['disponivel' => true, 'visto_em' => now()]);
+                app(CompartilhamentoVeiculoService::class)->retomarDisponibilidade((int) $motorista->id);
 
                 $this->notificarFinalizacao($corrida, $motorista->user_id);
             }
@@ -550,8 +538,7 @@ class DespachoCorridaService
             ]);
 
             if ($motoristaId !== null) {
-                StatusBusca::where('motorista_id', $motoristaId)
-                    ->update(['disponivel' => true, 'visto_em' => now()]);
+                app(CompartilhamentoVeiculoService::class)->retomarDisponibilidade((int) $motoristaId);
             }
 
             Avisar::semQuebrar(new CorridaAtualizada($corrida->id, 'cancelada'));
@@ -597,8 +584,7 @@ class DespachoCorridaService
                     ]);
 
                     if ($corrida->motorista_id !== null) {
-                        StatusBusca::where('motorista_id', $corrida->motorista_id)
-                            ->update(['disponivel' => true, 'visto_em' => now()]);
+                        app(CompartilhamentoVeiculoService::class)->retomarDisponibilidade((int) $corrida->motorista_id);
                     }
 
                     Avisar::semQuebrar(new CorridaAtualizada($corrida->id, 'cancelada'));

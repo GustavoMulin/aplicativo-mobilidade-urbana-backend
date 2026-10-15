@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Enums\PerfilAcessoGestor;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Support\Str;
@@ -12,6 +14,25 @@ class Gestor extends Authenticatable implements JWTSubject
     use SoftDeletes;
 
     protected $table = 'gestores';
+
+    protected $attributes = ['perfil_acesso' => 'atendimento'];
+
+    protected $appends = ['permissoes', 'perfil_acesso_nome'];
+
+    public function pode(string $permissao): bool
+    {
+        return in_array($permissao, $this->permissoes, true);
+    }
+
+    protected function permissoes(): Attribute
+    {
+        return Attribute::get(fn () => PerfilAcessoGestor::tryFrom((string) $this->perfil_acesso)?->permissoes() ?? []);
+    }
+
+    protected function perfilAcessoNome(): Attribute
+    {
+        return Attribute::get(fn () => PerfilAcessoGestor::tryFrom((string) $this->perfil_acesso)?->nome() ?? 'Sem acesso');
+    }
 
     protected $fillable = [
         'name', 'telefone', 'cpf', 'data_nascimento', 'email', 'foto', 'password',

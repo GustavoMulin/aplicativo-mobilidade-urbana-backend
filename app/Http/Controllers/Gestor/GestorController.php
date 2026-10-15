@@ -8,6 +8,7 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
@@ -79,7 +80,14 @@ class GestorController extends Controller
         if ($registro->id === $request->user()->id) {
             return response()->json(['message' => 'Você não pode arquivar o gestor que está utilizando o painel.'], 422);
         }
-        $registro->delete();
+        DB::transaction(function () use ($request, $gestor): void {
+            $ativos = Gestor::orderBy('id')->lockForUpdate()->get();
+            abort_unless($ativos->firstWhere('id', $request->user()->id)?->pode('gestores.gerenciar'), 403);
+            $registro = $ativos->firstWhere('id', $gestor);
+            abort_unless($registro !== null, 404);
+            abort_if($registro->perfil_acesso === 'admin' && $ativos->where('perfil_acesso', 'admin')->count() === 1, 422, 'Mantenha pelo menos um administrador ativo.');
+            $registro->delete();
+        }, 3);
 
         return response()->json(['message' => 'Gestor arquivado com sucesso.']);
     }
