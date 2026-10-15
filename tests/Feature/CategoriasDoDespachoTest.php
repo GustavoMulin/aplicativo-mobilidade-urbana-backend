@@ -271,6 +271,7 @@ it('veículo só pode ser carro ou moto, e elétrico só carro', function () {
         'cor' => 'Vermelha',
         'placa' => 'ABC1D23',
         'renavam' => '12345678901',
+        'cpf_cnpj_proprietario' => '12345678909',
         'uf' => 'RO',
     ];
 
