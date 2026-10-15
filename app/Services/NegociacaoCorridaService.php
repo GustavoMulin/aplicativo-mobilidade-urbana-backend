@@ -388,6 +388,8 @@ class NegociacaoCorridaService
             StatusBusca::where('motorista_id', $motorista->id)
                 ->update(['disponivel' => false, 'visto_em' => now()]);
 
+            $this->despacho->cancelarPropostasPendentes($motorista->id, $corrida->id);
+
             if ($prePago) {
                 $valor = (float) $proposta->valor_passageiro;
                 $usado = $this->pagamento->aplicarCredito($corrida, $valor);
