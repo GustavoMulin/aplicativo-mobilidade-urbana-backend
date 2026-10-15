@@ -9,11 +9,14 @@ use App\Http\Controllers\Usuario\ChamadosAjudaController;
 use App\Http\Resources\TicketResource;
 use App\Http\Resources\TicketTransferResource;
 use App\Models\ChamadoAjuda;
+use App\Models\ChamadoMensagem;
+use App\Models\ChamadoMensagemAnexo;
 use App\Models\Gestor;
 use App\Models\User;
 use App\Services\TicketsAjudaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 
 class TicketsController extends Controller
@@ -169,7 +172,7 @@ class TicketsController extends Controller
         $dados = $request->validate(['before_id' => 'nullable|integer|min:1', 'after_id' => 'nullable|integer|min:0', 'limit' => 'nullable|integer|min:1|max:100']);
         abort_if(isset($dados['before_id'], $dados['after_id']), 422, 'Use apenas um cursor.');
         $limit = $dados['limit'] ?? 50;
-        $query = $ticket->mensagens();
+        $query = $ticket->mensagens()->with('anexos');
         $after = isset($dados['after_id']);
         if ($after) {
             $query->where('id', '>', $dados['after_id']);
@@ -182,7 +185,7 @@ class TicketsController extends Controller
         $items = $items->take($limit)->sortBy('id')->values();
 
         // O cursor de IDs não recupera edições em mensagens já carregadas.
-        $atualizadas = $ticket->mensagens()->where('tipo_sistema', 'fila_atendimento')->get()->map->dados();
+        $atualizadas = $ticket->mensagens()->with('anexos')->where('tipo_sistema', 'fila_atendimento')->get()->map->dados();
 
         return response()->json(['data' => $items->map->dados(), 'atualizadas' => $atualizadas, 'has_more' => $more, 'next_before_id' => $items->first()?->id, 'next_after_id' => $items->last()?->id]);
     }
@@ -190,12 +193,31 @@ class TicketsController extends Controller
     public function enviar(Request $request, ChamadoAjuda $ticket)
     {
         $actor = $this->acesso($request, $ticket);
-        $dados = $request->validate(['conteudo' => 'required|string|max:4000', 'client_message_id' => 'required|uuid', 'autor_tipo' => 'prohibited', 'user_id' => 'prohibited', 'gestor_id' => 'prohibited']);
-        $texto = trim($dados['conteudo']);
-        abort_if($texto === '', 422, 'Escreva uma mensagem.');
-        $message = $this->service->enviar($ticket, $actor, $texto, $dados['client_message_id']);
+        $dados = $request->validate([
+            'conteudo' => 'nullable|string|max:4000', 'client_message_id' => 'required|uuid',
+            'imagens' => 'sometimes|array|max:3',
+            'imagens.*' => 'required|file|image|mimes:jpg,jpeg,png,webp|max:5120|dimensions:max_width=12000,max_height=12000',
+            'autor_tipo' => 'prohibited', 'user_id' => 'prohibited', 'gestor_id' => 'prohibited',
+        ]);
+        $texto = trim($dados['conteudo'] ?? '');
+        $imagens = array_values($request->file('imagens', []));
+        abort_if($texto === '' && $imagens === [], 422, 'Escreva uma mensagem ou adicione uma imagem.');
+        $message = $this->service->enviar($ticket, $actor, $texto, $dados['client_message_id'], $imagens);
 
         return response()->json(['data' => $message->dados()], 201);
+    }
+
+    public function anexo(Request $request, ChamadoAjuda $ticket, ChamadoMensagem $mensagem, ChamadoMensagemAnexo $anexo)
+    {
+        $this->acesso($request, $ticket);
+        abort_unless($mensagem->chamado_id === $ticket->id && $anexo->mensagem_id === $mensagem->id, 404);
+        $disk = Storage::disk($anexo->disk);
+        abort_unless($disk->exists($anexo->path), 404);
+
+        return $disk->response($anexo->path, $anexo->nome, [
+            'Content-Type' => $anexo->mime_type, 'X-Content-Type-Options' => 'nosniff',
+            'Cache-Control' => 'private, no-store',
+        ], 'inline');
     }
 
     public function leitura(Request $request, ChamadoAjuda $ticket)

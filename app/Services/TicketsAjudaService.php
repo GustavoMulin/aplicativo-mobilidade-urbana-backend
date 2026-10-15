@@ -17,7 +17,7 @@ use Illuminate\Validation\ValidationException;
 
 class TicketsAjudaService
 {
-    public function __construct(private FilaTicketsService $fila) {}
+    public function __construct(private FilaTicketsService $fila, private TicketAnexosService $anexos) {}
 
     public function validarContexto(User $user, array $dados): string
     {
@@ -49,13 +49,14 @@ class TicketsAjudaService
         });
     }
 
-    private function registrar(ChamadoAjuda $ticket, string $tipo, string $texto, User|Gestor|null $autor = null, ?string $uuid = null): ChamadoMensagem
+    private function registrar(ChamadoAjuda $ticket, string $tipo, string $texto, User|Gestor|null $autor = null, ?string $uuid = null, array $imagens = [], array &$gravados = []): ChamadoMensagem
     {
         $message = $ticket->mensagens()->create([
             'autor_tipo' => $tipo, 'user_id' => $autor instanceof User ? $autor->id : null,
             'gestor_id' => $autor instanceof Gestor ? $autor->id : null, 'autor_nome' => $autor?->name ?? 'Sistema',
             'conteudo' => $texto, 'client_message_id' => $uuid,
         ]);
+        $this->anexos->salvar($message, $imagens, $gravados);
         $ticket->ultima_mensagem_em = $message->created_at;
         $ticket->save();
         event(new TicketMensagemEnviada($ticket->id, $message->dados()));
@@ -118,37 +119,43 @@ class TicketsAjudaService
         });
     }
 
-    public function enviar(ChamadoAjuda $registro, User|Gestor $autor, string $texto, string $uuid): ChamadoMensagem
+    public function enviar(ChamadoAjuda $registro, User|Gestor $autor, string $texto, string $uuid, array $imagens = []): ChamadoMensagem
     {
-        return $this->fila->executar($registro, $autor instanceof Gestor ? [$autor->id] : [], function (ChamadoAjuda $ticket) use ($autor, $texto, $uuid) {
-            $this->acesso($ticket, $autor);
-            $tipo = $autor instanceof Gestor ? 'gestor' : 'usuario';
-            $anterior = $ticket->mensagens()->where('client_message_id', $uuid)->first();
-            if ($anterior) {
-                abort_unless($anterior->autor_tipo === $tipo && ($tipo === 'gestor' ? $anterior->gestor_id : $anterior->user_id) === $autor->id && $anterior->conteudo === $texto, 409, 'Identificador de mensagem já utilizado.');
+        $preparadas = $this->anexos->preparar($imagens);
+        $gravados = [];
+        try {
+            return $this->fila->executar($registro, $autor instanceof Gestor ? [$autor->id] : [], function (ChamadoAjuda $ticket) use ($autor, $texto, $uuid, $preparadas, &$gravados) {
+                $this->acesso($ticket, $autor);
+                $tipo = $autor instanceof Gestor ? 'gestor' : 'usuario';
+                $anterior = $ticket->mensagens()->where('client_message_id', $uuid)->first();
+                if ($anterior) {
+                    abort_unless($anterior->autor_tipo === $tipo && ($tipo === 'gestor' ? $anterior->gestor_id : $anterior->user_id) === $autor->id && $anterior->conteudo === $texto && $this->anexos->corresponde($anterior, $preparadas), 409, 'Identificador de mensagem já utilizado.');
 
-                return $anterior;
-            }
-            abort_if($ticket->status === 'closed', 409, 'Reabra o ticket antes de enviar mensagens.');
-            if ($autor instanceof Gestor) {
-                abort_if($ticket->gestor_responsavel_id && $ticket->gestor_responsavel_id !== $autor->id, 409, 'Assuma o atendimento antes de enviar uma mensagem.');
-                abort_if($ticket->status === 'resolved', 409, 'Reabra o ticket antes de enviar mensagens.');
-                abort_unless($ticket->gestor_responsavel_id === $autor->id && $ticket->status === 'in_progress',
-                    409, 'Inicie o atendimento antes de responder este ticket.');
-            } elseif (in_array($ticket->status, ['pending', 'resolved'], true)) {
-                if ($ticket->gestor_responsavel_id) {
-                    $this->fila->entrar($ticket);
-                } else {
-                    $ticket->status = 'open';
+                    return $anterior;
                 }
-                $ticket->resolvido_em = null;
-                $this->registrar($ticket, 'sistema', 'O solicitante retomou a conversa.');
-            }
-            $message = $this->registrar($ticket, $tipo, $texto, $autor, $uuid);
-            event(new TicketAtualizado($ticket->id));
+                abort_if($ticket->status === 'closed', 409, 'Reabra o ticket antes de enviar mensagens.');
+                if ($autor instanceof Gestor) {
+                    abort_if($ticket->gestor_responsavel_id && $ticket->gestor_responsavel_id !== $autor->id, 409, 'Assuma o atendimento antes de enviar uma mensagem.');
+                    abort_if($ticket->status === 'resolved', 409, 'Reabra o ticket antes de enviar mensagens.');
+                    abort_unless($ticket->gestor_responsavel_id === $autor->id && $ticket->status === 'in_progress',
+                        409, 'Inicie o atendimento antes de responder este ticket.');
+                } elseif (in_array($ticket->status, ['pending', 'resolved'], true)) {
+                    if ($ticket->gestor_responsavel_id) {
+                        $this->fila->entrar($ticket);
+                    } else {
+                        $ticket->status = 'open';
+                    }
+                    $ticket->resolvido_em = null;
+                    $this->registrar($ticket, 'sistema', 'O solicitante retomou a conversa.');
+                }
+                $message = $this->registrar($ticket, $tipo, $texto, $autor, $uuid, $preparadas, $gravados);
+                event(new TicketAtualizado($ticket->id));
 
-            return $message;
-        });
+                return $message;
+            });
+        } finally {
+            $this->anexos->limparNaoPersistidos($gravados);
+        }
     }
 
     public function assumir(ChamadoAjuda $registro, Gestor $gestor): ChamadoAjuda

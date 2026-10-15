@@ -4,6 +4,7 @@
 
 use App\Http\Controllers\Corrida\AumentarOfertaNegociaController;
 use App\Http\Controllers\Corrida\AvaliacoesCorridaController;
+use App\Http\Controllers\Corrida\ChatCorridaController;
 use App\Http\Controllers\Corrida\CobrancaCartaoController;
 use App\Http\Controllers\Corrida\CobrancaPixController;
 use App\Http\Controllers\Corrida\CorridaController;
@@ -59,6 +60,9 @@ Route::get('corridas/{corrida}/pix', [CobrancaPixController::class, 'consultar']
 Route::post('corridas/{corrida}/pix/simular', [CobrancaPixController::class, 'simular'])->middleware('throttle:10,1,simular-pix');
 Route::post('corridas/{corrida}/cartao', [CobrancaCartaoController::class, 'criar'])->middleware('throttle:10,1,cobranca-cartao');
 Route::get('corridas/{corrida}/cartao', [CobrancaCartaoController::class, 'consultar']);
+
+Route::get('corridas/{corrida}/mensagens', [ChatCorridaController::class, 'index'])->whereNumber('corrida');
+Route::post('corridas/{corrida}/mensagens', [ChatCorridaController::class, 'store'])->whereNumber('corrida')->middleware('throttle:60,1');
 
 Route::apiResource('corridas', CorridaController::class)->only(['index', 'store', 'show']);
 Route::post('precos-corrida', [CorridaController::class, 'precosCorrida'])->middleware('throttle:30,1,precos-corrida');
