@@ -10,6 +10,7 @@ use App\Events\MotoristaMoveu;
 use App\Models\AvaliacoesCorrida;
 use App\Models\Corrida;
 use App\Models\CorridaFinanceiro;
+use App\Models\CorridaNegociacoes;
 use App\Models\CorridaOpcao;
 use App\Models\Motorista;
 use App\Models\MotoristaVeiculo;
@@ -245,11 +246,39 @@ class DespachoCorridaService
             StatusBusca::where('motorista_id', $motorista->id)
                 ->update(['disponivel' => false, 'visto_em' => now()]);
 
+            $this->cancelarPropostasPendentes($motorista->id, $corrida->id);
+
             Avisar::semQuebrar(new CorridaAtualizada($corrida->id, 'aceita'));
             Avisar::semQuebrar(new CorridasDisponiveisAlteradas);
 
             return $corrida->fresh(['corrida_destinos', 'corrida_financeiro']);
         });
+    }
+
+    /**
+     * Quem pegou uma corrida (normal, ou escolhido no Negocia) não atende mais
+     * as outras: as propostas dele que esperavam passageiro são canceladas e
+     * somem da tela desses passageiros.
+     */
+    public function cancelarPropostasPendentes(int $motoristaId, int $corridaAtendida): void
+    {
+        $corridas = CorridaNegociacoes::where('motorista_id', $motoristaId)
+            ->where('corrida_id', '!=', $corridaAtendida)
+            ->where('status', 'pendente')
+            ->pluck('corrida_id');
+
+        if ($corridas->isEmpty()) {
+            return;
+        }
+
+        CorridaNegociacoes::where('motorista_id', $motoristaId)
+            ->whereIn('corrida_id', $corridas)
+            ->where('status', 'pendente')
+            ->update(['status' => 'cancelada']);
+
+        foreach ($corridas as $corridaId) {
+            Avisar::semQuebrar(new CorridaAtualizada((int) $corridaId, 'solicitada'));
+        }
     }
 
     /**
