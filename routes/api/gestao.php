@@ -2,7 +2,7 @@
 
 use App\Http\Controllers\Ajuda\TicketsController;
 use App\Http\Controllers\Auth\GestorAutenticacaoController;
-use App\Http\Controllers\Corrida\CorridaController;
+use App\Http\Controllers\Gestao\CorridasController;
 use App\Http\Controllers\Gestao\FotoPerfilController;
 use App\Http\Controllers\Gestao\RegrasAcessoController;
 use App\Http\Controllers\Gestao\VeiculoUsuariosController;
@@ -64,7 +64,7 @@ Route::prefix('gestao')->name('gestao.')->group(function () {
             Route::get('motorista-documentos/{motoristaDocumentoId}/download', [MotoristaDocumentoController::class, 'baixar']);
             Route::apiResource('motorista-documentos', MotoristaDocumentoController::class);
             Route::put('mudar-status-documento/{motoristaDocumentoId}', [MotoristaDocumentoController::class, 'mudarStatusDocumento']);
-            Route::apiResource('corridas', CorridaController::class)->only(['index', 'show']);
+            Route::apiResource('corridas', CorridasController::class)->only(['index', 'show']);
 
             Route::get('veiculos/{veiculoId}/usuarios', VeiculoUsuariosController::class)->whereNumber('veiculoId');
 
