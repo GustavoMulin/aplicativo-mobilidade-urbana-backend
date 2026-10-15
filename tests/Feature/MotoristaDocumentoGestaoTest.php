@@ -49,7 +49,7 @@ it('salva os campos da CNH e o PDF no motorista indicado sem alterar seu usuario
         ->assertCreated()
         ->assertJsonPath('data.motorista_id', $this->motorista->id)
         ->assertJsonPath('data.status', 'em_analise')
-        ->assertJsonPath('situacao_motorista', 'em_analise');
+        ->assertJsonPath('situacao_motorista', 'pendente');
 
     $this->assertDatabaseHas('motoristas', ['id' => $this->motorista->id, ...$cnh, 'ear' => 1]);
     foreach ($cnh as $campo => $valor) {
@@ -97,10 +97,11 @@ it('permite limpar campos opcionais e salvar EAR como nao', function () {
 });
 
 it('envia outros documentos sem modificar os campos da CNH', function () {
+    // o seguro não tem campos próprios; CRLV e Nada Consta exigem os dados do documento
     $this->post('/api/motorista-documentos', [
         'motorista_id' => $this->motorista->id,
-        'tipo_documento' => 'crlv',
-        'arquivo' => UploadedFile::fake()->create('crlv.pdf', 100, 'application/pdf'),
+        'tipo_documento' => 'seguro_obrigatorio',
+        'arquivo' => UploadedFile::fake()->create('seguro.pdf', 100, 'application/pdf'),
     ], ['Accept' => 'application/json'])->assertCreated();
 
     expect($this->motorista->fresh()->nome)->toBe('Nome anterior')
@@ -122,14 +123,15 @@ it('recusa campos invalidos antes de salvar o arquivo ou alterar o motorista', f
         ->and(Storage::disk('motorista_documentos_anexos')->allFiles())->toBe([])
         ->and($this->motorista->fresh()->nome)->toBe('Nome anterior');
 })->with([
-    'CPF incompleto' => ['cnh', ['cpf' => '123'], 'cnh.cpf'],
-    'data inexistente' => ['cnh', ['data_emissao' => '2026-02-30'], 'cnh.data_emissao'],
-    'observacao longa' => ['cnh', ['observacao' => str_repeat('A', 5001)], 'cnh.observacao'],
-    'observacao nao textual' => ['cnh', ['observacao' => ['EAR']], 'cnh.observacao'],
-    'registro longo' => ['cnh', ['numero_registro' => str_repeat('1', 21)], 'cnh.numero_registro'],
-    'campo removido' => ['cnh', ['cnh_numero' => '00123456789'], 'cnh'],
-    'campo fora da CNH' => ['cnh', ['status' => 'aprovado'], 'cnh'],
-    'CNH em outro documento' => ['crlv', ['nome' => 'Outro nome'], 'cnh'],
+    // os campos chegam em "cnh" (cliente antigo) e são validados como informacoes_complementares
+    'CPF incompleto' => ['cnh', ['cpf' => '123'], 'informacoes_complementares.cpf'],
+    'data inexistente' => ['cnh', ['data_emissao' => '2026-02-30'], 'informacoes_complementares.data_emissao'],
+    'observacao longa' => ['cnh', ['observacao' => str_repeat('A', 5001)], 'informacoes_complementares.observacao'],
+    'observacao nao textual' => ['cnh', ['observacao' => ['EAR']], 'informacoes_complementares.observacao'],
+    'registro longo' => ['cnh', ['numero_registro' => str_repeat('1', 21)], 'informacoes_complementares.numero_registro'],
+    'campo removido' => ['cnh', ['cnh_numero' => '00123456789'], 'informacoes_complementares'],
+    'campo fora da CNH' => ['cnh', ['status' => 'aprovado'], 'informacoes_complementares'],
+    'CNH em outro documento' => ['crlv', ['nome' => 'Outro nome'], 'informacoes_complementares'],
 ]);
 
 it('desfaz dados documento e arquivo se o salvamento conjunto falhar', function () {

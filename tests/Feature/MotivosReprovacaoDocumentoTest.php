@@ -46,7 +46,7 @@ it('salva um motivo do enum e ignora descricao de Outro para motivos padronizado
         ->assertJsonPath('data.descricao_reprovacao', null)
         ->assertJsonPath('data.motivo_reprovacao_texto', MotivoReprovacaoDocumento::from($motivo)->titulo());
     expect($this->documento->fresh()->motivo_reprovacao)->toBe(MotivoReprovacaoDocumento::from($motivo))
-        ->and($this->motorista->fresh()->status)->toBe('reprovado');
+        ->and($this->motorista->fresh()->status)->toBe('pendente');
     $this->actingAs($this->motorista->user, 'jwt')->getJson('/api/motorista/cadastro')
         ->assertOk()->assertJsonPath('documentos.0.motivo_reprovacao_texto', MotivoReprovacaoDocumento::from($motivo)->titulo());
 })->with(['ilegivel', 'incompleto', 'vencido', 'dados_divergentes', 'tipo_incorreto', 'frente_verso_ausente']);
@@ -98,7 +98,7 @@ it('preserva motivo anterior e corrige dados ao reenviar uma CNH com novo anexo'
         ->and($this->documento->fresh()->status)->toBe('reprovado')
         ->and($this->motorista->fresh()->nome)->toBe('Nome corrigido')
         ->and((bool) $this->motorista->fresh()->ear)->toBeFalse()
-        ->and($this->motorista->fresh()->status)->toBe('em_analise');
+        ->and($this->motorista->fresh()->status)->toBe('pendente');
     $ultimo = MotoristaDocumento::latest('id')->first();
     $this->getJson('/api/motorista-documentos/'.$this->motorista->id.'/resumo')->assertOk()
         ->assertJsonPath('data.0.id', $ultimo->id)->assertJsonPath('data.0.status', 'em_analise')

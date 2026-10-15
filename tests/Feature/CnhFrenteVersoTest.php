@@ -27,7 +27,7 @@ it('salva as duas fotos com metadados e urls em uma unica CNH', function ($mobil
         'arquivo_verso' => UploadedFile::fake()->create('verso.png', 100, 'image/png'),
         ...($mobile ? [] : ['cnh' => ['nome' => 'Nome conferido', 'observacao' => 'EAR']]),
     ], ['Accept' => 'application/json'])->assertCreated();
-    $documento = MotoristaDocumento::sole();
+    $documento = MotoristaDocumento::where('ordem', 0)->sole();
     expect($documento->name)->toBe('frente.jpg')
         ->and($documento->verso['name'])->toBe('verso.png')
         ->and($documento->verso['mime_type'])->toBe('image/png')
@@ -35,7 +35,8 @@ it('salva as duas fotos com metadados e urls em uma unica CNH', function ($mobil
         ->and($documento->url)->toBe('http://localhost/'.$documento->path)
         ->and($documento->verso['url'])->toBe('http://localhost/'.$documento->verso['path'])
         ->and($documento->status)->toBe('em_analise')
-        ->and($this->motorista->fresh()->status)->toBe('em_analise');
+        // a situação do motorista só tem dois estados: ativo ou pendente
+        ->and($this->motorista->fresh()->status)->toBe('pendente');
     $response->assertJsonPath(($mobile ? 'documento' : 'data').'.verso.name', 'verso.png');
     Storage::disk('motorista_documentos_anexos')->assertExists([basename($documento->path), basename($documento->verso['path'])]);
     if (! $mobile) {
@@ -69,7 +70,7 @@ it('mantem o envio de PDF sem verso', function ($mobile) {
         'motorista_id' => $this->motorista->id, 'tipo_documento' => 'cnh', 'arquivo' => UploadedFile::fake()->create('cnh.pdf', 100, 'application/pdf'),
     ], ['Accept' => 'application/json'])->assertCreated();
     $response->assertJsonPath(($mobile ? 'documento' : 'data').'.verso', null);
-    expect(MotoristaDocumento::sole()->verso)->toBeNull()->and(Storage::disk('motorista_documentos_anexos')->allFiles())->toHaveCount(1);
+    expect(MotoristaDocumento::where('ordem', 0)->sole()->verso)->toBeNull()->and(Storage::disk('motorista_documentos_anexos')->allFiles())->toHaveCount(1);
 })->with([false, true]);
 
 it('exclui frente e verso juntos e preserva outro envio', function ($mobile) {
@@ -78,11 +79,13 @@ it('exclui frente e verso juntos e preserva outro envio', function ($mobile) {
         'arquivo' => UploadedFile::fake()->create('frente.png', 100, 'image/png'),
         'arquivo_verso' => UploadedFile::fake()->create('verso.png', 100, 'image/png'),
     ], ['Accept' => 'application/json'])->assertCreated();
-    $documento = MotoristaDocumento::sole();
+    $documento = MotoristaDocumento::where('ordem', 0)->sole();
+    // o verso é outro registro: guarda os caminhos antes de excluir
+    $arquivos = [basename($documento->path), basename($documento->verso['path'])];
     Storage::disk('motorista_documentos_anexos')->put('outro.pdf', 'Outro documento');
     $this->deleteJson(($mobile ? '/api/motorista/cadastro/documentos/' : '/api/motorista-documentos/').$documento->id)->assertOk();
     expect(MotoristaDocumento::count())->toBe(0);
-    Storage::disk('motorista_documentos_anexos')->assertMissing([basename($documento->path), basename($documento->verso['path'])]);
+    Storage::disk('motorista_documentos_anexos')->assertMissing($arquivos);
     Storage::disk('motorista_documentos_anexos')->assertExists('outro.pdf');
 })->with([false, true]);
 
