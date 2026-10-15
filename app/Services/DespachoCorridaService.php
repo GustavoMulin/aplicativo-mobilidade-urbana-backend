@@ -843,6 +843,8 @@ class DespachoCorridaService
             'valor_motorista' => $proposta->valor_motorista,
             'status' => $proposta->valendo() ? 'pendente' : ($proposta->status === 'pendente' ? 'expirada' : $proposta->status),
             'expira_em' => $proposta->expira_em?->toIso8601String(),
+            // o app desenha a barra do tempo com o prazo inteiro, sem chutar
+            'validade_segundos' => NegociacaoCorridaService::validadeDaPropostaSegundos(),
         ];
     }
 
