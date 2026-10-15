@@ -3,14 +3,17 @@
 namespace App\Http\Controllers\Ajuda;
 
 use App\Enums\StatusTicket;
+use App\Events\TicketLido;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Usuario\ChamadosAjudaController;
 use App\Http\Resources\TicketResource;
+use App\Http\Resources\TicketTransferResource;
 use App\Models\ChamadoAjuda;
 use App\Models\Gestor;
 use App\Models\User;
 use App\Services\TicketsAjudaService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class TicketsController extends Controller
@@ -22,6 +25,9 @@ class TicketsController extends Controller
         $actor = $request->user();
         if ($actor instanceof Gestor) {
             abort_unless($actor->pode('ajuda.gerenciar'), 403);
+            if ($ticket) {
+                abort_unless($actor->podeAcessarTicket($ticket), 404);
+            }
         } else {
             abort_unless($actor instanceof User, 403);
             if ($ticket) {
@@ -40,10 +46,31 @@ class TicketsController extends Controller
             'solicitante_tipo' => 'nullable|in:passageiro,motorista',
             'search' => 'nullable|string|max:100', 'per_page' => 'nullable|integer|min:1|max:50',
             'page' => 'nullable|integer|min:1',
+            'fila' => 'nullable|in:todos,entrada,meus',
         ]);
         $query = ChamadoAjuda::with(['solicitante', 'responsavel', 'corrida']);
         if ($actor instanceof User) {
             $query->where('user_id', $actor->id);
+        }
+        if ($actor instanceof Gestor) {
+            $query->comNaoLidas($actor->id);
+            if (! $actor->visualizaTodosTickets() || ($dados['fila'] ?? null) === 'meus') {
+                $query->whereNotIn('status', ['resolved', 'closed']);
+            }
+            if (! $actor->visualizaTodosTickets()) {
+                $query->orderByRaw("CASE status WHEN 'in_progress' THEN 0 WHEN 'waiting' THEN 1 WHEN 'open' THEN 2 WHEN 'pending' THEN 3 ELSE 4 END")->orderBy('fila_entrada_em');
+                $query->where(function ($q) use ($actor) {
+                    $q->where('gestor_responsavel_id', $actor->id);
+                    if ($actor->visualizaEntradaTickets()) {
+                        $q->orWhereNull('gestor_responsavel_id');
+                    }
+                });
+            }
+            if (($dados['fila'] ?? null) === 'entrada') {
+                $query->whereNull('gestor_responsavel_id');
+            } elseif (($dados['fila'] ?? null) === 'meus') {
+                $query->where('gestor_responsavel_id', $actor->id);
+            }
         }
         if (! empty($dados['status'])) {
             $query->where('status', $dados['status']);
@@ -61,6 +88,43 @@ class TicketsController extends Controller
         }
 
         return TicketResource::collection($query->orderByDesc('ultima_mensagem_em')->orderByDesc('id')->paginate($dados['per_page'] ?? 20));
+    }
+
+    public function operadores(Request $request)
+    {
+        abort_unless($this->acesso($request) instanceof Gestor, 403);
+        $dados = $request->validate(['search' => 'nullable|string|max:100', 'page' => 'nullable|integer|min:1', 'exclude_user_id' => 'nullable|integer|min:1']);
+        $query = Gestor::whereIn('perfil_acesso', ['atendimento', 'suporte_tecnico', 'gestao', 'admin']);
+        if ($search = trim($dados['search'] ?? '')) {
+            $query->where('name', 'like', '%'.$search.'%');
+        }
+        if (! empty($dados['exclude_user_id'])) {
+            $query->where('id', '!=', $dados['exclude_user_id']);
+        }
+        $page = $query->orderBy('name')->orderBy('id')->paginate(20);
+        $page->setCollection($page->getCollection()->map(fn (Gestor $gestor) => $gestor->only(['id', 'name', 'perfil_acesso', 'perfil_acesso_nome'])));
+
+        return response()->json($page);
+    }
+
+    public function transferir(Request $request, ChamadoAjuda $ticket)
+    {
+        $gestor = $this->acesso($request, $ticket);
+        abort_unless($gestor instanceof Gestor, 403);
+        $dados = $request->validate(['to_user_id' => 'required|integer|min:1', 'note' => 'nullable|string|max:1000']);
+        $nota = trim($dados['note'] ?? '');
+        $registro = $this->service->transferir($ticket, $gestor, $dados['to_user_id'], $nota === '' ? null : $nota);
+
+        return new TicketResource($registro->load(['solicitante', 'responsavel', 'corrida']));
+    }
+
+    public function transferencias(Request $request, ChamadoAjuda $ticket)
+    {
+        $gestor = $this->acesso($request, $ticket);
+        abort_unless($gestor instanceof Gestor && $gestor->visualizaTodosTickets(), 403);
+        $request->validate(['page' => 'nullable|integer|min:1']);
+
+        return TicketTransferResource::collection($ticket->transferencias()->orderByDesc('id')->paginate(20));
     }
 
     public function solicitantes(Request $request)
@@ -117,7 +181,10 @@ class TicketsController extends Controller
         $more = $items->count() > $limit;
         $items = $items->take($limit)->sortBy('id')->values();
 
-        return response()->json(['data' => $items->map->dados(), 'has_more' => $more, 'next_before_id' => $items->first()?->id, 'next_after_id' => $items->last()?->id]);
+        // O cursor de IDs não recupera edições em mensagens já carregadas.
+        $atualizadas = $ticket->mensagens()->where('tipo_sistema', 'fila_atendimento')->get()->map->dados();
+
+        return response()->json(['data' => $items->map->dados(), 'atualizadas' => $atualizadas, 'has_more' => $more, 'next_before_id' => $items->first()?->id, 'next_after_id' => $items->last()?->id]);
     }
 
     public function enviar(Request $request, ChamadoAjuda $ticket)
@@ -129,6 +196,29 @@ class TicketsController extends Controller
         $message = $this->service->enviar($ticket, $actor, $texto, $dados['client_message_id']);
 
         return response()->json(['data' => $message->dados()], 201);
+    }
+
+    public function leitura(Request $request, ChamadoAjuda $ticket)
+    {
+        $gestor = $this->acesso($request, $ticket);
+        abort_unless($gestor instanceof Gestor, 403);
+        $dados = $request->validate(['ultima_mensagem_id' => 'required|integer|min:1']);
+        $cursor = DB::transaction(function () use ($ticket, $gestor, $dados) {
+            $ator = Gestor::whereKey($gestor->id)->lockForUpdate()->firstOrFail();
+            $atual = ChamadoAjuda::whereKey($ticket->id)->lockForUpdate()->firstOrFail();
+            abort_unless($ator->podeAcessarTicket($atual), 404);
+            abort_unless($atual->mensagens()->whereKey($dados['ultima_mensagem_id'])->exists(), 422, 'Mensagem inválida para este atendimento.');
+            $anterior = (int) DB::table('ticket_leituras')->where('ticket_id', $ticket->id)->where('gestor_id', $ator->id)->value('ultima_mensagem_id');
+            $cursor = max($anterior, $dados['ultima_mensagem_id']);
+            if ($cursor > $anterior) {
+                DB::table('ticket_leituras')->updateOrInsert(['ticket_id' => $ticket->id, 'gestor_id' => $ator->id], ['ultima_mensagem_id' => $cursor, 'lida_em' => now()]);
+                event(new TicketLido($ticket->id, $ator->id, $cursor));
+            }
+
+            return $cursor;
+        }, 3);
+
+        return response()->json(['data' => ['ticket_id' => $ticket->id, 'ultima_mensagem_id' => $cursor]]);
     }
 
     public function assumir(Request $request, ChamadoAjuda $ticket)

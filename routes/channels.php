@@ -35,7 +35,13 @@ Broadcast::channel('ajuda.ticket.{ticketId}.cliente', function (User $user, int 
 }, ['guards' => ['jwt']]);
 
 Broadcast::channel('ajuda.ticket.{ticketId}.suporte', function (Gestor $gestor, int $ticketId) {
-    return $gestor->pode('ajuda.gerenciar') && ChamadoAjuda::whereKey($ticketId)->exists();
+    $ticket = ChamadoAjuda::find($ticketId);
+
+    return $ticket && $gestor->podeAcessarTicket($ticket);
 }, ['guards' => ['gestores']]);
 
-Broadcast::channel('ajuda.suporte', fn (Gestor $gestor) => $gestor->pode('ajuda.gerenciar'), ['guards' => ['gestores']]);
+Broadcast::channel('ajuda.suporte', fn (Gestor $gestor) => $gestor->visualizaTodosTickets(), ['guards' => ['gestores']]);
+
+Broadcast::channel('ajuda.entrada', fn (Gestor $gestor) => $gestor->visualizaEntradaTickets(), ['guards' => ['gestores']]);
+
+Broadcast::channel('ajuda.operador.{operadorId}', fn (Gestor $gestor, int $operadorId) => $gestor->id === $operadorId && $gestor->pode('ajuda.gerenciar'), ['guards' => ['gestores']]);

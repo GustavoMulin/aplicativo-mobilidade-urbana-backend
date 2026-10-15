@@ -16,7 +16,7 @@ class ChamadosAjudaController extends Controller
     {
         // O app existente continua recebendo os nomes antigos; novas rotas usam StatusTicket.
         return $ticket->only(['id', 'corrida_id', 'motivo', 'descricao', 'created_at']) + ['status' => match ($ticket->status) {
-            'open' => 'aberto', 'in_progress' => 'em_atendimento', 'pending' => 'pendente', 'resolved' => 'resolvido', 'closed' => 'fechado', default => $ticket->status,
+            'open' => 'aberto', 'in_progress' => 'em_atendimento', 'waiting' => 'pendente', 'pending' => 'pendente', 'resolved' => 'resolvido', 'closed' => 'fechado', default => $ticket->status,
         }];
     }
 

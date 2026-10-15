@@ -2,6 +2,7 @@
 
 namespace App\Events;
 
+use App\Models\ChamadoAjuda;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcast;
 use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
@@ -12,7 +13,11 @@ class TicketAtualizado implements ShouldBroadcast, ShouldDispatchAfterCommit
 
     public function broadcastOn(): array
     {
-        return [new PrivateChannel('ajuda.suporte'), new PrivateChannel("ajuda.ticket.{$this->ticketId}.cliente"), new PrivateChannel("ajuda.ticket.{$this->ticketId}.suporte")];
+        $canais = [new PrivateChannel('ajuda.suporte'), new PrivateChannel("ajuda.ticket.{$this->ticketId}.cliente"), new PrivateChannel("ajuda.ticket.{$this->ticketId}.suporte")];
+        $responsavel = ChamadoAjuda::whereKey($this->ticketId)->value('gestor_responsavel_id');
+        $canais[] = new PrivateChannel($responsavel ? "ajuda.operador.{$responsavel}" : 'ajuda.entrada');
+
+        return $canais;
     }
 
     public function broadcastAs(): string

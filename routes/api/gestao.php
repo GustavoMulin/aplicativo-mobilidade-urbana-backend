@@ -28,11 +28,15 @@ Route::prefix('gestao')->name('gestao.')->group(function () {
 
         Route::middleware('permissao.gestao')->group(function () {
             Route::get('ajuda/solicitantes', [TicketsController::class, 'solicitantes']);
+            Route::get('ajuda/operadores', [TicketsController::class, 'operadores']);
+            Route::post('ajuda/tickets/{ticket}/transfer', [TicketsController::class, 'transferir'])->whereNumber('ticket')->middleware('throttle:30,1');
+            Route::get('ajuda/tickets/{ticket}/transferencias', [TicketsController::class, 'transferencias'])->whereNumber('ticket');
             Route::get('ajuda/tickets', [TicketsController::class, 'index']);
             Route::post('ajuda/tickets', [TicketsController::class, 'store'])->middleware('throttle:10,1');
             Route::get('ajuda/tickets/{ticket}', [TicketsController::class, 'show'])->whereNumber('ticket');
             Route::get('ajuda/tickets/{ticket}/mensagens', [TicketsController::class, 'mensagens'])->whereNumber('ticket');
             Route::post('ajuda/tickets/{ticket}/mensagens', [TicketsController::class, 'enviar'])->whereNumber('ticket')->middleware('throttle:60,1');
+            Route::post('ajuda/tickets/{ticket}/leitura', [TicketsController::class, 'leitura'])->whereNumber('ticket')->middleware('throttle:120,1');
             Route::post('ajuda/tickets/{ticket}/assumir', [TicketsController::class, 'assumir'])->whereNumber('ticket');
             Route::patch('ajuda/tickets/{ticket}/status', [TicketsController::class, 'status'])->whereNumber('ticket');
             Route::get('administracao/regras', [RegrasAcessoController::class, 'index']);

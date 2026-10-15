@@ -12,7 +12,9 @@ class TicketMensagemEnviada implements ShouldBroadcast, ShouldDispatchAfterCommi
 
     public function broadcastOn(): array
     {
-        return [new PrivateChannel("ajuda.ticket.{$this->ticketId}.cliente"), new PrivateChannel("ajuda.ticket.{$this->ticketId}.suporte")];
+        // Operadores recebem avisos sem conteudo via TicketAtualizado e revalidam pela API.
+        // Assim uma assinatura anterior nao expoe mensagens apos a transferencia.
+        return [new PrivateChannel("ajuda.ticket.{$this->ticketId}.cliente")];
     }
 
     public function broadcastAs(): string

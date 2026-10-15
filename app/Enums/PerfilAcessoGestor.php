@@ -5,13 +5,15 @@ namespace App\Enums;
 enum PerfilAcessoGestor: string
 {
     case ATENDIMENTO = 'atendimento';
+    case SUPORTE_TECNICO = 'suporte_tecnico';
     case GESTAO = 'gestao';
     case ADMIN = 'admin';
 
     public function nome(): string
     {
         return match ($this) {
-            self::ATENDIMENTO => 'Atendimento / suporte',
+            self::ATENDIMENTO => 'Atendimento',
+            self::SUPORTE_TECNICO => 'Suporte técnico',
             self::GESTAO => 'Gestão',
             self::ADMIN => 'Admin',
         };
@@ -39,7 +41,7 @@ enum PerfilAcessoGestor: string
         $consulta = ['usuarios.consultar', 'veiculos.consultar', 'documentos.consultar', 'corridas.consultar', 'ajuda.gerenciar'];
 
         return match ($this) {
-            self::ATENDIMENTO => $consulta,
+            self::ATENDIMENTO, self::SUPORTE_TECNICO => $consulta,
             self::GESTAO => [...$consulta, 'usuarios.gerenciar', 'veiculos.gerenciar', 'documentos.analisar'],
             self::ADMIN => array_keys(self::catalogoPermissoes()),
         };
@@ -48,7 +50,8 @@ enum PerfilAcessoGestor: string
     public function descricao(): string
     {
         return match ($this) {
-            self::ATENDIMENTO => 'Consulta da operação e atendimento aos usuários.',
+            self::ATENDIMENTO => 'Atendimento aos usuários e encaminhamento dos chamados aos responsáveis.',
+            self::SUPORTE_TECNICO => 'Investigação de bugs, falhas do aplicativo e outros problemas de TI.',
             self::GESTAO => 'Cadastros, veículos e análise dos documentos da operação.',
             self::ADMIN => 'Controle completo do painel, dos gestores e dos acessos.',
         };
