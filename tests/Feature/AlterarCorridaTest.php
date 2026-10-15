@@ -57,7 +57,7 @@ function criarCorridaAlteravel(
 ): array {
     $motorista = Motorista::create([
         'user_id' => criarUsuarioAlteracao('motorista')->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'cnh_numero' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,

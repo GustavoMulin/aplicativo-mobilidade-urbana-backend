@@ -48,10 +48,11 @@ it('salva cada tipo como enum e retorna seu valor na API de documentos', functio
         'motorista_id' => $this->motorista->id,
         'tipo_documento' => $tipo,
         'arquivo' => UploadedFile::fake()->create('documento.pdf', 100, 'application/pdf'),
+        ...informacoesDoDocumento($tipo),
     ], ['Accept' => 'application/json'])
         ->assertCreated()
         ->assertJsonPath('data.tipo_documento', $tipo)
-        ->assertJsonPath('situacao_motorista', 'em_analise');
+        ->assertJsonPath('situacao_motorista', 'pendente');
 
     $this->assertDatabaseHas('motorista_documentos_anexos', [
         'id' => $response->json('data.id'),
@@ -91,12 +92,13 @@ it('aprova o motorista quando os quatro tipos do enum estao aprovados', function
             'motorista_id' => $this->motorista->id,
             'tipo_documento' => $tipo->value,
             'arquivo' => UploadedFile::fake()->create('documento.pdf', 100, 'application/pdf'),
+            ...informacoesDoDocumento($tipo->value),
         ], ['Accept' => 'application/json'])->assertCreated();
         $this->putJson('/api/mudar-status-documento/'.$envio->json('data.id'), [
             'status' => 'aprovado',
         ])->assertOk();
     }
-    expect($this->motorista->fresh()->status)->toBe('aprovado');
+    expect($this->motorista->fresh()->status)->toBe('ativo');
     $this->actingAs(User::findOrFail($this->motorista->user_id), 'jwt')
         ->getJson('/api/motorista/cadastro')
         ->assertOk()->assertJsonPath('documentos_faltando', []);

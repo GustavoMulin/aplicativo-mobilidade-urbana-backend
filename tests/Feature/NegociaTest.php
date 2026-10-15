@@ -74,7 +74,7 @@ function negUsuario(string $prefixo, string $nome = 'Teste Silva'): User
 
 function negMotorista(string $nome = 'Carlos Souza', string $tipo = 'carro', float $latitude = -8.7601): Motorista
 {
-    $motorista = Motorista::create(['user_id' => negUsuario('motorista', $nome)->id, 'status' => 'aprovado']);
+    $motorista = Motorista::create(['user_id' => negUsuario('motorista', $nome)->id, 'status' => 'ativo']);
     $veiculo = Veiculo::create([
         'marca' => 'Chevrolet',
         'modelo' => 'Onix',

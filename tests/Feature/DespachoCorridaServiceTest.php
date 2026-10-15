@@ -10,10 +10,12 @@ use App\Models\Corrida;
 use App\Models\CorridaDestino;
 use App\Models\CorridaFinanceiro;
 use App\Models\Motorista;
+use App\Models\MotoristaVeiculo;
 use App\Models\Passageiro;
 use App\Models\StatusBusca;
 use App\Models\Tarifa;
 use App\Models\User;
+use App\Models\Veiculo;
 use App\Services\DespachoCorridaService;
 use App\Services\EstimarChegadaService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -49,14 +51,30 @@ function criarMotoristaDespacho(
     $usuario = criarUsuarioDespacho('motorista');
     $motorista = Motorista::create([
         'user_id' => $usuario->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'numero_registro' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,
         'ear' => null,
     ]);
+    // ficar online e aceitar exigem veículo vinculado e liberado
+    $veiculo = Veiculo::create([
+        'marca' => 'Chevrolet',
+        'modelo' => 'Onix',
+        'ano_fabricacao' => 2023,
+        'ano_modelo' => 2023,
+        'cor' => 'Prata',
+        'placa' => 'DSP'.random_int(1000, 9999),
+        'renavam' => (string) random_int(10000000000, 99999999999),
+        'cpf_cnpj_proprietario' => '12345678909',
+        'categoria' => 'carro',
+        'status' => 'aprovado',
+        'uf' => 'RO',
+    ]);
+    MotoristaVeiculo::create(['motorista_id' => $motorista->id, 'veiculo_id' => $veiculo->id]);
     $status = StatusBusca::create([
         'motorista_id' => $motorista->id,
+        'veiculo_id' => $veiculo->id,
         'disponivel' => $disponivel,
         'latitude' => $latitude,
         'longitude' => $longitude,
@@ -309,18 +327,31 @@ it('agrega reputacao e mantem consultas constantes com muitas ofertas', function
         criarCorridaDespacho($passageiro, -8.762000 - ($indice / 100000));
     }
 
-    DB::flushQueryLog();
-    DB::enableQueryLog();
-    $ofertas = app(DespachoCorridaService::class)->ofertasPara($motorista);
-    $consultas = count(DB::getQueryLog());
-    DB::disableQueryLog();
+    $contar = function () use ($motorista): array {
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        $ofertas = app(DespachoCorridaService::class)->ofertasPara($motorista);
+        $consultas = count(DB::getQueryLog());
+        DB::disableQueryLog();
+
+        return [$ofertas, $consultas];
+    };
+
+    [$ofertas, $consultas] = $contar();
+
+    foreach (range(41, 60) as $indice) {
+        criarCorridaDespacho($passageiro, -8.762000 - ($indice / 100000));
+    }
+    [$maisOfertas, $maisConsultas] = $contar();
 
     expect($ofertas)->toHaveCount(40)
+        ->and($maisOfertas)->toHaveCount(60)
         ->and($ofertas->first()['passageiro_nota'])->toBe(5.0)
         ->and($ofertas->first()['passageiro_corridas'])->toBe(1)
         // fixas, não crescem com as ofertas: inclui o veículo do motorista e
         // as categorias aceitas em cada pedido
-        ->and($consultas)->toBeLessThanOrEqual(10);
+        ->and($maisConsultas)->toBe($consultas)
+        ->and($consultas)->toBeLessThanOrEqual(12);
 });
 
 it('impede aceite direto por motorista offline', function () {

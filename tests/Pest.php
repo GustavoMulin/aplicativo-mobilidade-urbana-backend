@@ -48,3 +48,38 @@ function something()
 {
     // ..
 }
+
+/**
+ * Dados que o envio de CRLV e de Nada Consta exige; os outros tipos não têm campos.
+ *
+ * @return array<string, array<string, mixed>>
+ */
+function informacoesDoDocumento(string $tipo): array
+{
+    return match ($tipo) {
+        'crlv' => ['informacoes_complementares' => [
+            'placa' => 'ABC1D23',
+            'renavam' => '12345678901',
+            'chassi' => '9BWZZZ377VT004251',
+            'exercicio' => 2025,
+            'cpf_cnpj_proprietario' => '12345678909',
+            'nome_proprietario' => 'Proprietário Teste',
+            'marca_modelo' => 'VW/GOL',
+            'categoria_veiculo' => 'carro',
+            'cor' => 'Prata',
+            'ano_fabricacao' => 2020,
+            'ano_modelo' => 2020,
+            'uf' => 'RO',
+        ]],
+        'nada_consta' => ['informacoes_complementares' => [
+            'numero_certidao' => 'NC-2026/001',
+            'orgao_emissor' => 'Polícia Federal',
+            'nome' => 'Motorista Teste',
+            'cpf' => '12345678909',
+            'data_emissao' => '2026-10-01',
+            'data_validade' => '2026-12-31',
+            'resultado' => 'Nada consta.',
+        ]],
+        default => [],
+    };
+}

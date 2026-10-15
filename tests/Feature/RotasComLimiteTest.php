@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\Passageiro;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
@@ -17,6 +18,8 @@ it('cada rota com limite tem o próprio contador e o limite continua valendo', f
         'status' => 'ativo',
         'password' => 'senha-de-teste',
     ]);
+    // o chamado de ajuda é aberto pelo perfil (o login do app sempre cria o de passageiro)
+    Passageiro::create(['user_id' => $usuario->id]);
 
     $sugestao = ['tipo' => 'comentario', 'descricao' => 'A busca poderia mostrar mais lojas.'];
 

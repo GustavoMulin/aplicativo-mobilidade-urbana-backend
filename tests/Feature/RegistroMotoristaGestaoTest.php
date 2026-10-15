@@ -11,7 +11,13 @@ it('registra pelo painel um usuario como motorista pendente sem exigir CNH e EAR
     $usuario = User::factory()->create();
 
     $this->actingAs($operador, 'jwt')
-        ->postJson('/api/motoristas', ['user_id' => $usuario->id])
+        // o painel confirma as credenciais da pessoa ao adicionar o perfil
+        ->postJson('/api/motoristas', [
+            'user_id' => $usuario->id,
+            'email' => $usuario->email,
+            'password' => 'senha-do-painel',
+            'password_confirmation' => 'senha-do-painel',
+        ])
         ->assertCreated()
         ->assertJsonPath('data.user_id', $usuario->id)
         ->assertJsonPath('data.status', 'pendente');

@@ -47,7 +47,7 @@ function motoristaDoSaque(): Motorista
 {
     return Motorista::create([
         'user_id' => usuarioDoSaque('motorista')->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
         'cnh_numero' => null,
         'cnh_categoria' => null,
         'cnh_expiracao' => null,

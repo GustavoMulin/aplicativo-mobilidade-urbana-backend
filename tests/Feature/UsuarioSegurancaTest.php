@@ -185,7 +185,7 @@ it('retorna a foto correspondente ao aplicativo autenticado', function () {
     Motorista::create([
         'user_id' => $user->id,
         'foto' => 'https://example.test/motorista.jpg',
-        'status' => 'aprovado',
+        'status' => 'ativo',
     ]);
 
     $this->actingAs($user, 'jwt')
@@ -278,7 +278,7 @@ it('não recria um perfil que foi arquivado', function () {
     ]);
     $motorista = Motorista::create([
         'user_id' => $user->id,
-        'status' => 'aprovado',
+        'status' => 'ativo',
     ]);
     $motorista->delete();
 

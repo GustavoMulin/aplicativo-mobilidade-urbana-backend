@@ -65,6 +65,7 @@ it('usa a URL configurada do backend fora do ambiente local', function () {
     $response = $this->post('/api/motorista-documentos', [
         'motorista_id' => $this->motorista->id, 'tipo_documento' => 'crlv',
         'arquivo' => UploadedFile::fake()->create('crlv.pdf', 100, 'application/pdf'),
+        ...informacoesDoDocumento('crlv'),
     ], ['Accept' => 'application/json'])->assertCreated();
     expect($response->json('data.url'))->toBe('https://backend.exemplo.test/'.$response->json('data.path'));
 });
@@ -112,5 +113,5 @@ it('reprova o anexo sem exigir ou gravar observacao da analise', function () {
     $this->putJson('/api/mudar-status-documento/'.$documento->id, ['status' => 'reprovado', 'motivo_reprovacao' => 'ilegivel'])->assertOk();
     expect($documento->fresh()->status)->toBe('reprovado')
         ->and($documento->fresh()->getAttributes())->not->toHaveKey('observacao')
-        ->and($this->motorista->fresh()->status)->toBe('reprovado');
+        ->and($this->motorista->fresh()->status)->toBe('pendente');
 });

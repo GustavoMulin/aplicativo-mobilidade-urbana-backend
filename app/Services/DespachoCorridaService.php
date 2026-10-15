@@ -274,8 +274,6 @@ class DespachoCorridaService
             throw new RuntimeException('Você já está em uma corrida.', 409);
         }
 
-        $selecionado = StatusBusca::where('motorista_id', $motorista->id)->value('veiculo_id') ?? $this->veiculoPadrao($motorista);
-        app(CompartilhamentoVeiculoService::class)->validarParaCorrida($motorista, $selecionado);
         $status = StatusBusca::where('motorista_id', $motorista->id)
             ->lockForUpdate()
             ->first();
@@ -283,14 +281,16 @@ class DespachoCorridaService
         if ($status === null || ! $status->disponivel) {
             throw new RuntimeException('Você precisa estar disponível para aceitar corridas.', 409);
         }
-        if ($status->veiculo_id !== null && $status->veiculo_id !== $selecionado) {
-            throw new RuntimeException('O veículo selecionado mudou. Atualize a disponibilidade antes de aceitar.', 409);
-        }
 
         if ($this->onlineExpirou($status)) {
             $status->update(['disponivel' => false]);
             throw new RuntimeException('Sua sessão online expirou. Conecte-se novamente.', 409);
         }
+
+        // o veículo só é conferido depois de saber que o motorista está online:
+        // offline, o motivo certo é "conecte-se", não o veículo
+        $selecionado = $status->veiculo_id ?? $this->veiculoPadrao($motorista);
+        app(CompartilhamentoVeiculoService::class)->validarParaCorrida($motorista, $selecionado);
 
         if ($status->latitude === null || $status->longitude === null) {
             throw new RuntimeException('Posição do motorista desconhecida.', 422);

@@ -95,10 +95,10 @@ it('atalho de desenvolvimento aprova o motorista sem passar pela análise', func
     $this->actingAs($usuario, 'jwt')
         ->postJson('/api/motorista/cadastro/aprovar-dev')
         ->assertOk()
-        ->assertJsonPath('situacao', 'aprovado');
+        ->assertJsonPath('situacao', 'ativo');
 
     $motorista = Motorista::where('user_id', $usuario->id)->firstOrFail();
-    expect($motorista->status)->toBe('aprovado')
+    expect($motorista->status)->toBe('ativo')
         ->and($motorista->numero_registro)->not->toBeNull();
 
     $documentos = MotoristaDocumento::where('motorista_id', $motorista->id)->get();
@@ -110,7 +110,7 @@ it('atalho de desenvolvimento aprova o motorista sem passar pela análise', func
 
     $this->actingAs($usuario, 'jwt')->getJson('/api/motorista/cadastro')
         ->assertOk()
-        ->assertJsonPath('situacao', 'aprovado')
+        ->assertJsonPath('situacao', 'ativo')
         ->assertJsonPath('pendencias', []);
 
     $this->actingAs($usuario, 'jwt')->getJson('/api/motorista/situacao')
