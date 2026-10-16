@@ -63,4 +63,11 @@ return [
         'redirect' => env('APPLE_REDIRECT_URI'),
     ],
 
+    // push dos apps: caminho do JSON da conta de serviço do projeto Firebase
+    // (Configurações do projeto > Contas de serviço > Gerar nova chave). Fica
+    // fora do git; sem ele o push é ignorado.
+    'fcm' => [
+        'credenciais' => env('FIREBASE_CREDENTIALS'),
+    ],
+
 ];
