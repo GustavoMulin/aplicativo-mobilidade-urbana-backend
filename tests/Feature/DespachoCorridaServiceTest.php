@@ -196,6 +196,19 @@ it('filtra casos invalidos e ordena as ofertas pela distancia ao embarque', func
         ->and($ofertas->pluck('corrida_id')->contains($longe->id))->toBeFalse();
 });
 
+it('manda o trajeto da corrida em ordem para o mapa da chamada', function () {
+    [$motorista] = criarMotoristaDespacho(true);
+    $corrida = criarCorridaDespacho(criarPassageiroDespacho(), -8.763160);
+
+    $oferta = app(DespachoCorridaService::class)->ofertasPara($motorista)
+        ->firstWhere('corrida_id', $corrida->id);
+
+    expect($oferta['trajeto'])->toBe([
+        ['tipo' => 'origem', 'latitude' => -8.76316, 'longitude' => -63.90043],
+        ['tipo' => 'destino', 'latitude' => -8.701, 'longitude' => -63.91],
+    ]);
+});
+
 it('respeita o raio configurado na tarifa', function () {
     [$motorista] = criarMotoristaDespacho(true);
     $passageiro = criarPassageiroDespacho();
