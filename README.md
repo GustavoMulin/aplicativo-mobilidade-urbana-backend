@@ -151,3 +151,15 @@ A migration `2026_10_15_180000_create_ticket_leituras_table.php` cria `ticket_le
 `POST /api/gestao/ajuda/tickets/{ticket}/leitura` recebe `{ "ultima_mensagem_id": 123 }` e marca somente o intervalo visto. O cursor nunca regride; ler em uma conta não limpa o contador de outra. O painel marca quando a conversa está na aba Mensagens e a janela está visível/com foco. O evento `ticket.lido` atualiza outras sessões da mesma conta no canal privado `ajuda.operador.{id}`, sem provocar atualizações na fila de outros operadores.
 
 A identificação da conta substitui o botão Novo ticket no cabeçalho da Central; a criação de tickets continua disponível pela API.
+
+## Consulta de saldo dos motoristas
+
+A página Motoristas saldo utiliza GET /api/gestao/motoristas-saldo, GET /api/gestao/motoristas-saldo/{movimentacao} e GET /api/gestao/motoristas-saldo/{movimentacao}/corrida/mensagens. Requer JWT de Gestor e financeiro.consultar (Gestão/Admin). Aceita search (nome/CPF/ID), motorista_id, tipo, status, data_inicio, data_fim, timezone, page e per_page (máximo 50). O status vem de detalhes.status (confirmado por padrão, processando, falhou ou cancelado).
+
+A migration 2026_10_16_140000_create_saldo_motoristas_table.php cria saldo_motoristas com os valores anterior/posterior e detalhes JSON. Execute php artisan migrate; não é necessário recriar o banco. A tabela começa vazia. Este módulo não grava movimentações automaticamente e não expõe cadastro, alteração, exclusão ou resgate.
+
+O detalhe retorna os saldos gravados e verifica a igualdade em centavos. O saldo atual é consultado em CarteiraMotoristaService, preservando as regras de corridas pagas, dinheiro em mãos e saques. A composição usa detalhes.financeiro quando existir um snapshot; campos ausentes nesse snapshot ficam nulos. Sem snapshot, consulta os valores atuais de corrida_financeiros. Taxa de cancelamento da corrida e dívida de terceiros permanecem separadas. Valores ausentes retornam nulos.
+
+Para visualizar um exemplo completo de Motoristas saldo em desenvolvimento, execute php artisan db:seed --class=SaldoMotoristasDemonstracaoSeeder. Cria uma conta separada Motorista financeiro de teste (motorista.financeiro@example.com), quatro corridas fictícias, dois resgates simulados e seis lançamentos, com saldo final de R$ 54,37. Não chama gateways nem altera as contas já existentes. Exclusivo de local/testing e pode ser repetido sem duplicar os dados. Este seeder é manual e não é executado pelo DatabaseSeeder.
+
+A aba Histórico da corrida no financeiro reutiliza os detalhes, mapa e conversa motorista/passageiro da Central de ajuda. O histórico é vinculado ao lançamento, sem exigir ticket, e permanece somente leitura (pode_enviar=false). Aceita before_id ou after_id e limit de 1 a 100. O canal privado corrida.{id}.chat.financeiro requer financeiro.consultar e lançamento vinculado; o evento contém apenas corrida_id e mensagem_id, e a API revalida acesso. O seeder de demonstração também completa os trajetos e conversas fictícias das quatro corridas, sem alterar saldos.

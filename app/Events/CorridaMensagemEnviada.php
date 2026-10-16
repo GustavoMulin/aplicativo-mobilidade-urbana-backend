@@ -12,7 +12,7 @@ class CorridaMensagemEnviada implements ShouldBroadcast, ShouldDispatchAfterComm
 
     public function broadcastOn(): array
     {
-        return [new PrivateChannel("corrida.{$this->corridaId}.chat"), new PrivateChannel("corrida.{$this->corridaId}.chat.suporte")];
+        return [new PrivateChannel("corrida.{$this->corridaId}.chat"), new PrivateChannel("corrida.{$this->corridaId}.chat.suporte"), new PrivateChannel("corrida.{$this->corridaId}.chat.financeiro")];
     }
 
     public function broadcastAs(): string

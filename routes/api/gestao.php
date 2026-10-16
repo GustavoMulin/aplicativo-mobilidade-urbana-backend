@@ -5,7 +5,9 @@ use App\Http\Controllers\Auth\GestorAutenticacaoController;
 use App\Http\Controllers\Corrida\ChatCorridaController;
 use App\Http\Controllers\Gestao\CorridasController;
 use App\Http\Controllers\Gestao\FotoPerfilController;
+use App\Http\Controllers\Gestao\HistoricoCorridaSaldoController;
 use App\Http\Controllers\Gestao\RegrasAcessoController;
+use App\Http\Controllers\Gestao\SaldoMotoristasController;
 use App\Http\Controllers\Gestao\VeiculoUsuariosController;
 use App\Http\Controllers\Gestor\GestorController;
 use App\Http\Controllers\Motorista\MotoristaController;
@@ -28,6 +30,9 @@ Route::prefix('gestao')->name('gestao.')->group(function () {
         Route::post('broadcasting/auth', fn (Request $request) => Broadcast::auth($request))->middleware('throttle:120,1');
 
         Route::middleware('permissao.gestao')->group(function () {
+            Route::get('motoristas-saldo/{movimentacao}/corrida/mensagens', HistoricoCorridaSaldoController::class)->whereNumber('movimentacao')->name('motoristas-saldo.corrida');
+            Route::get('motoristas-saldo', [SaldoMotoristasController::class, 'index'])->name('motoristas-saldo.index');
+            Route::get('motoristas-saldo/{movimentacao}', [SaldoMotoristasController::class, 'show'])->whereNumber('movimentacao')->name('motoristas-saldo.show');
             Route::get('ajuda/solicitantes', [TicketsController::class, 'solicitantes']);
             Route::get('ajuda/operadores', [TicketsController::class, 'operadores']);
             Route::post('ajuda/tickets/{ticket}/transfer', [TicketsController::class, 'transferir'])->whereNumber('ticket')->middleware('throttle:30,1');
