@@ -714,6 +714,16 @@ class DespachoCorridaService
             'origem' => $origem->endereco,
             'destino' => $destino?->endereco,
             'paradas' => $corrida->corrida_destinos->where('tipo', 'parada')->count(),
+            // o app desenha o trajeto no mapa enquanto a chamada toca
+            'trajeto' => $corrida->corrida_destinos
+                ->sortBy('ordem')
+                ->map(fn ($ponto) => [
+                    'tipo' => $ponto->tipo,
+                    'latitude' => (float) $ponto->latitude,
+                    'longitude' => (float) $ponto->longitude,
+                ])
+                ->values()
+                ->all(),
             'para_outra_pessoa' => $corrida->convidado_nome !== null,
             'solicitada_em' => $corrida->tempo_solicitacao,
             ...($reputacoes[$corrida->passageiro_id] ?? [
