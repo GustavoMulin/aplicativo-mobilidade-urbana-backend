@@ -61,7 +61,7 @@ class TicketsController extends Controller
                 $query->whereNotIn('status', ['resolved', 'closed']);
             }
             if (! $actor->visualizaTodosTickets()) {
-                $query->orderByRaw("CASE status WHEN 'in_progress' THEN 0 WHEN 'waiting' THEN 1 WHEN 'open' THEN 2 WHEN 'pending' THEN 3 ELSE 4 END")->orderBy('fila_entrada_em');
+                $query->orderByRaw("CASE status WHEN 'in_progress' THEN 0 WHEN 'waiting' THEN 1 WHEN 'open' THEN 2 ELSE 3 END")->orderBy('fila_entrada_em');
                 $query->where(function ($q) use ($actor) {
                     $q->where('gestor_responsavel_id', $actor->id);
                     if ($actor->visualizaEntradaTickets()) {
