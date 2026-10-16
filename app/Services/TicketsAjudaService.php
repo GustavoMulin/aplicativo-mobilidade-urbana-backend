@@ -103,7 +103,7 @@ class TicketsAjudaService
     {
         return $this->fila->executar($registro, [$destinoId], function (ChamadoAjuda $ticket) use ($autor, $destinoId, $nota) {
             $this->acesso($ticket, $autor);
-            abort_if(in_array($ticket->status, ['resolved', 'closed'], true), 409, 'Reabra o ticket antes de transferir.');
+            abort_if(in_array($ticket->status, ['resolved', 'closed'], true), 409, 'Atendimento finalizado não pode ser transferido.');
             $destino = Gestor::whereKey($destinoId)->lockForUpdate()->first();
             if (! $destino || ! $destino->pode('ajuda.gerenciar')) {
                 throw ValidationException::withMessages(['to_user_id' => 'Selecione um operador ativo com acesso à Central de ajuda.']);
@@ -133,20 +133,11 @@ class TicketsAjudaService
 
                     return $anterior;
                 }
-                abort_if($ticket->status === 'closed', 409, 'Reabra o ticket antes de enviar mensagens.');
+                abort_if(in_array($ticket->status, ['resolved', 'closed'], true), 409, 'Este atendimento foi finalizado. Abra um novo ticket para continuar.');
                 if ($autor instanceof Gestor) {
                     abort_if($ticket->gestor_responsavel_id && $ticket->gestor_responsavel_id !== $autor->id, 409, 'Assuma o atendimento antes de enviar uma mensagem.');
-                    abort_if($ticket->status === 'resolved', 409, 'Reabra o ticket antes de enviar mensagens.');
                     abort_unless($ticket->gestor_responsavel_id === $autor->id && $ticket->status === 'in_progress',
                         409, 'Inicie o atendimento antes de responder este ticket.');
-                } elseif (in_array($ticket->status, ['pending', 'resolved'], true)) {
-                    if ($ticket->gestor_responsavel_id) {
-                        $this->fila->entrar($ticket);
-                    } else {
-                        $ticket->status = 'open';
-                    }
-                    $ticket->resolvido_em = null;
-                    $this->registrar($ticket, 'sistema', 'O solicitante retomou a conversa.');
                 }
                 $message = $this->registrar($ticket, $tipo, $texto, $autor, $uuid, $preparadas, $gravados);
                 event(new TicketAtualizado($ticket->id));
@@ -162,11 +153,14 @@ class TicketsAjudaService
     {
         return $this->fila->executar($registro, [$gestor->id], function (ChamadoAjuda $ticket) use ($gestor) {
             $this->acesso($ticket, $gestor);
-            abort_if(in_array($ticket->status, ['resolved', 'closed'], true), 409, 'Reabra o ticket antes de assumir.');
+            abort_if(in_array($ticket->status, ['resolved', 'closed'], true), 409, 'Atendimento finalizado não pode ser iniciado novamente.');
             if ($ticket->gestor_responsavel_id !== $gestor->id) {
                 $tipo = $ticket->gestor_responsavel_id ? 'takeover_by_manager' : 'queue_distribution';
                 $this->atribuir($ticket, $gestor, $gestor, $tipo);
                 event(new TicketAtualizado($ticket->id));
+            }
+            if (! in_array($ticket->status, ['waiting', 'in_progress'], true)) {
+                $this->fila->entrar($ticket);
             }
 
             $this->fila->iniciar($ticket);
@@ -185,8 +179,8 @@ class TicketsAjudaService
             if ($ticket->status === $status->value) {
                 return $ticket;
             }
-            abort_if($status === StatusTicket::Closed && $ticket->status !== 'resolved', 422, 'Resolva o ticket antes de fechá-lo.');
-            abort_if($ticket->status === 'closed' && ! in_array($status, [StatusTicket::Open, StatusTicket::InProgress], true), 422, 'Reabra o ticket para continuar.');
+            abort_if(in_array($ticket->status, ['resolved', 'closed'], true),
+                409, 'Este atendimento foi finalizado. Abra um novo ticket para continuar.');
             if ($status === StatusTicket::InProgress) {
                 abort_if($ticket->gestor_responsavel_id && $ticket->gestor_responsavel_id !== $gestor->id, 409, 'Assuma o atendimento antes de iniciá-lo.');
                 if (! $ticket->gestor_responsavel_id) {
@@ -198,8 +192,7 @@ class TicketsAjudaService
             } else {
                 $ticket->status = $status->value;
             }
-            $ticket->resolvido_em = $status === StatusTicket::Resolved ? now() : ($status === StatusTicket::Closed ? $ticket->resolvido_em : null);
-            $ticket->fechado_em = $status === StatusTicket::Closed ? now() : null;
+            $ticket->resolvido_em = $status === StatusTicket::Resolved ? now() : null;
             if ($status === StatusTicket::Open) {
                 $this->atribuir($ticket, null, $gestor, 'queue_return');
             } elseif (! $ticket->gestor_responsavel_id) {
