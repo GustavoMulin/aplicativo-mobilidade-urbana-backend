@@ -248,11 +248,42 @@ class DespachoCorridaService
 
             $this->cancelarPropostasPendentes($motorista->id, $corrida->id);
 
+            $this->notificarPassageiro($corrida, 'Motorista a caminho', 'Seu motorista aceitou a corrida e está indo até o embarque.');
+
             Avisar::semQuebrar(new CorridaAtualizada($corrida->id, 'aceita'));
             Avisar::semQuebrar(new CorridasDisponiveisAlteradas);
 
             return $corrida->fresh(['corrida_destinos', 'corrida_financeiro']);
         });
+    }
+
+    /**
+     * Push e notificação no app do passageiro sobre a própria corrida. O texto
+     * leva só o carro e a placa, que o passageiro precisa para embarcar.
+     */
+    private function notificarPassageiro(Corrida $corrida, string $titulo, string $mensagem): void
+    {
+        $userId = Passageiro::whereKey($corrida->passageiro_id)->value('user_id');
+
+        if ($userId !== null) {
+            $this->notificarUsuario->executar((int) $userId, 'passageiro', $titulo, $mensagem, [
+                'corrida_id' => (string) $corrida->id,
+                'status' => (string) $corrida->status_corrida,
+            ]);
+        }
+    }
+
+    private function carroDaCorrida(Corrida $corrida): string
+    {
+        $veiculo = $corrida->veiculo_id ? Veiculo::find($corrida->veiculo_id) : null;
+
+        if ($veiculo === null) {
+            return 'o carro do motorista';
+        }
+
+        $descricao = trim(implode(' ', array_filter([$veiculo->modelo, $veiculo->cor])));
+
+        return trim(($descricao !== '' ? $descricao : 'o carro').($veiculo->placa ? ", placa {$veiculo->placa}" : ''));
     }
 
     /**
@@ -420,6 +451,11 @@ class DespachoCorridaService
 
             if ($regra['para'] === 'em_andamento') {
                 $this->contabilizarEsperaCorridaService->contabilizar($corrida);
+                $this->notificarPassageiro($corrida, 'Corrida iniciada', 'Boa viagem! Acompanhe o trajeto pelo app.');
+            }
+
+            if ($regra['para'] === 'motorista_chegou') {
+                $this->notificarPassageiro($corrida, 'Seu motorista chegou', 'Encontre '.$this->carroDaCorrida($corrida).' no embarque.');
             }
 
             if ($regra['para'] === 'finalizada') {
@@ -568,6 +604,23 @@ class DespachoCorridaService
 
             if ($motoristaId !== null) {
                 app(CompartilhamentoVeiculoService::class)->retomarDisponibilidade((int) $motoristaId);
+            }
+
+            // quem cancelou já sabe; o outro lado fica sabendo pelo celular
+            if ($quem !== 'passageiro') {
+                $this->notificarPassageiro($corrida, 'Corrida cancelada', $quem === 'motorista'
+                    ? 'O motorista cancelou a corrida. Você pode pedir de novo pelo app.'
+                    : 'Sua corrida foi cancelada. Você pode pedir de novo pelo app.');
+            }
+
+            $motoristaUserId = $motoristaId !== null ? Motorista::whereKey($motoristaId)->value('user_id') : null;
+            if ($quem !== 'motorista' && $motoristaUserId !== null) {
+                $this->notificarUsuario->executar((int) $motoristaUserId, 'motorista', 'Corrida cancelada', $quem === 'passageiro'
+                    ? 'O passageiro cancelou a corrida. Você voltou a receber chamadas.'
+                    : 'A corrida foi cancelada. Você voltou a receber chamadas.', [
+                        'corrida_id' => (string) $corrida->id,
+                        'status' => 'cancelada',
+                    ]);
             }
 
             Avisar::semQuebrar(new CorridaAtualizada($corrida->id, 'cancelada'));
