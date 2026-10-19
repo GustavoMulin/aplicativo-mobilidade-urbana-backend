@@ -304,6 +304,7 @@ class PagamentoCorridaService
 
                 $corrida->update([
                     'status_corrida' => 'cancelada',
+                    'cancelada_em' => now(),
                     'cancelado_por' => 'sistema',
                     'motivo_cancelamento' => 'Pagamento não confirmado a tempo.',
                 ]);
