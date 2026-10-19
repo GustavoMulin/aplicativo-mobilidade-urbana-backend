@@ -26,7 +26,8 @@ enum PerfilAcessoGestor: string
             'veiculos.consultar' => 'Consultar veículos e motoristas vinculados',
             'documentos.consultar' => 'Visualizar e baixar documentos',
             'corridas.consultar' => 'Consultar corridas',
-            'financeiro.consultar' => 'Consultar saldo e movimentações de motoristas',
+            'financeiro.consultar' => 'Consultar saldo, ganhos de motoristas e resultados da plataforma',
+            'financeiro.conciliar' => 'Conciliar custos e comprovações de recebimento da plataforma',
             'ajuda.gerenciar' => 'Registrar e acompanhar chamados de suporte',
             'usuarios.gerenciar' => 'Cadastrar e alterar dados operacionais',
             'veiculos.gerenciar' => 'Cadastrar e vincular veículos',
@@ -43,7 +44,7 @@ enum PerfilAcessoGestor: string
 
         return match ($this) {
             self::ATENDIMENTO, self::SUPORTE_TECNICO => $consulta,
-            self::GESTAO => [...$consulta, 'financeiro.consultar', 'usuarios.gerenciar', 'veiculos.gerenciar', 'documentos.analisar'],
+            self::GESTAO => [...$consulta, 'financeiro.consultar', 'financeiro.conciliar', 'usuarios.gerenciar', 'veiculos.gerenciar', 'documentos.analisar'],
             self::ADMIN => array_keys(self::catalogoPermissoes()),
         };
     }

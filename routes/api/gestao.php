@@ -7,6 +7,7 @@ use App\Http\Controllers\Gestao\CorridasController;
 use App\Http\Controllers\Gestao\FotoPerfilController;
 use App\Http\Controllers\Gestao\GanhosMotoristasController;
 use App\Http\Controllers\Gestao\HistoricoCorridaSaldoController;
+use App\Http\Controllers\Gestao\PlataformaLucrosController;
 use App\Http\Controllers\Gestao\RegrasAcessoController;
 use App\Http\Controllers\Gestao\SaldoMotoristasController;
 use App\Http\Controllers\Gestao\VeiculoUsuariosController;
@@ -31,6 +32,12 @@ Route::prefix('gestao')->name('gestao.')->group(function () {
         Route::post('broadcasting/auth', fn (Request $request) => Broadcast::auth($request))->middleware('throttle:120,1');
 
         Route::middleware('permissao.gestao')->group(function () {
+            Route::post('plataforma-lucros/custos-avulsos', [PlataformaLucrosController::class, 'registrarCusto'])->middleware('throttle:10,1');
+            Route::get('plataforma-lucros', [PlataformaLucrosController::class, 'index']);
+            Route::post('plataforma-lucros/sincronizar', [PlataformaLucrosController::class, 'sincronizar'])->middleware('throttle:20,1');
+            Route::get('plataforma-lucros/{lucro}', [PlataformaLucrosController::class, 'show'])->whereNumber('lucro');
+            Route::patch('plataforma-lucros/{lucro}/custos', [PlataformaLucrosController::class, 'conciliar'])->whereNumber('lucro')->middleware('throttle:20,1');
+            Route::post('plataforma-lucros/{lucro}/recebimento', [PlataformaLucrosController::class, 'recebimento'])->whereNumber('lucro')->middleware('throttle:10,1');
             Route::get('motoristas-ganhos/motoristas', [GanhosMotoristasController::class, 'motoristas']);
             Route::get('motoristas-ganhos/resumo', [GanhosMotoristasController::class, 'resumo']);
             Route::get('motoristas-ganhos/detalhes', [GanhosMotoristasController::class, 'detalhes']);
