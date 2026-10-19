@@ -59,9 +59,16 @@ class PlataformaLucrosController extends Controller
             $query->where('status_custos', $dados['status_custos']);
         }
         $totais = ['lucro_realizado' => 0, 'lucro_estimado_recebido' => 0, 'comissoes_a_receber' => 0, 'online_aguardando_liquidacao' => 0, 'gmv_realizado' => 0, 'custos_pendentes' => 0, 'quantidade' => 0];
+        $porHora = $dados['periodo'] === 'hoje';
         $grafico = [];
-        for ($dia = $inicio; $dia->lt($fim); $dia = $dia->addDay()) {
-            $grafico[$dia->toDateString()] = 0;
+        if ($porHora) {
+            for ($hora = 0; $hora < 24; $hora++) {
+                $grafico[sprintf('%02d:00', $hora)] = ['centavos' => 0, 'quantidade' => 0];
+            }
+        } else {
+            for ($dia = $inicio; $dia->lt($fim); $dia = $dia->addDay()) {
+                $grafico[$dia->toDateString()] = ['centavos' => 0, 'quantidade' => 0];
+            }
         }
         foreach ((clone $query)->cursor() as $registro) {
             $totais['quantidade']++;
@@ -83,8 +90,10 @@ class PlataformaLucrosController extends Controller
             }
             $totais['lucro_realizado'] += $lucro;
             $totais['gmv_realizado'] += $service::centavos($registro->valor_bruto_passageiro) ?? 0;
-            $dia = $registro->recebido_em->setTimezone($inicio->timezone)->toDateString();
-            $grafico[$dia] += $lucro;
+            $recebimentoLocal = $registro->recebido_em->setTimezone($inicio->timezone);
+            $chave = $porHora ? $recebimentoLocal->format('H:00') : $recebimentoLocal->toDateString();
+            $grafico[$chave]['centavos'] += $lucro;
+            $grafico[$chave]['quantidade']++;
         }
         $take = $totais['gmv_realizado'] > 0 ? number_format($totais['lucro_realizado'] * 100 / $totais['gmv_realizado'], 2, '.', '') : null;
         foreach (['lucro_realizado', 'lucro_estimado_recebido', 'comissoes_a_receber', 'online_aguardando_liquidacao', 'gmv_realizado'] as $campo) {
@@ -96,7 +105,8 @@ class PlataformaLucrosController extends Controller
             'meta' => ['total' => $pagina->total(), 'current_page' => $pagina->currentPage(), 'last_page' => $pagina->lastPage()],
             'resumo' => [...$totais, 'take_rate' => $take],
             'periodo' => ['inicio' => $inicio->toDateString(), 'fim' => $fim->subDay()->toDateString(), 'timezone' => $inicio->timezoneName],
-            'grafico' => collect($grafico)->map(fn ($valor, $dia) => ['data' => $dia, 'valor' => $service::moeda($valor)])->values()]);
+            'grafico_granularidade' => $porHora ? 'hora' : 'dia',
+            'grafico' => collect($grafico)->map(fn ($ponto, $chave) => ['data' => $chave, 'valor' => $service::moeda($ponto['centavos']), 'quantidade' => $ponto['quantidade']])->values()]);
     }
 
     public function show(int $lucro, PlataformaLucrosService $service)
