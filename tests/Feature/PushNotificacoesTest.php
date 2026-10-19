@@ -3,6 +3,7 @@
 use App\Models\Corrida;
 use App\Models\CorridaDestino;
 use App\Models\CorridaFinanceiro;
+use App\Models\CorridaMensagem;
 use App\Models\DispositivoPush;
 use App\Models\Motorista;
 use App\Models\MotoristaVeiculo;
@@ -15,6 +16,7 @@ use App\Services\DespachoCorridaService;
 use App\Services\EnviarPushService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request as PedidoHttp;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
@@ -224,4 +226,143 @@ it('esquece o aparelho que o FCM diz não existir mais', function () {
     app(EnviarPushService::class)->paraUsuario($usuario->id, 'passageiro', 'Teste', 'Mensagem');
 
     expect(DispositivoPush::count())->toBe(0);
+});
+
+/**
+ * @return array{0: Corrida, 1: User, 2: User}
+ */
+function corridaComConversa(): array
+{
+    $motorista = motoristaOnlineParaPush();
+    $passageiro = Passageiro::create(['user_id' => User::factory()->create(['name' => 'Ana Souza'])->id]);
+    $corrida = corridaSolicitadaParaPush($passageiro);
+    app(DespachoCorridaService::class)->aceitar($motorista, $corrida->id);
+    User::whereKey($motorista->user_id)->update(['name' => 'Carlos Lima']);
+
+    return [$corrida->fresh(), User::find($motorista->user_id), User::find($passageiro->user_id)];
+}
+
+function enviosDoChat(): Collection
+{
+    return Http::recorded(fn (PedidoHttp $pedido) => str_contains($pedido->url(), 'fcm.googleapis.com')
+        && ($pedido['message']['data']['tipo'] ?? null) === 'chat_corrida')->values();
+}
+
+it('a mensagem do motorista chega por push só no celular do passageiro', function () {
+    firebaseRespondendo();
+    config(['services.fcm.credenciais' => credenciaisFirebaseDeTeste()]);
+    [$corrida, $motorista, $passageiro] = corridaComConversa();
+    DispositivoPush::create(['user_id' => $passageiro->id, 'perfil' => 'passageiro', 'token' => 'celular-da-ana']);
+    DispositivoPush::create(['user_id' => $motorista->id, 'perfil' => 'motorista', 'token' => 'celular-do-carlos']);
+
+    $resposta = $this->actingAs($motorista, 'jwt')->postJson("/api/corridas/{$corrida->id}/mensagens", [
+        'conteudo' => 'Cheguei! Estou no local de embarque.',
+        'client_message_id' => (string) Str::uuid(),
+    ])->assertCreated();
+
+    $envios = enviosDoChat();
+    expect($envios)->toHaveCount(1);
+    [$pedido] = $envios[0];
+    expect($pedido['message']['token'])->toBe('celular-da-ana')
+        ->and($pedido['message']['notification']['title'])->toBe('Carlos · Motorista')
+        ->and($pedido['message']['notification']['body'])->toBe('Cheguei! Estou no local de embarque.')
+        ->and($pedido['message']['data'])->toBe([
+            'tipo' => 'chat_corrida',
+            'corrida_id' => (string) $corrida->id,
+            'mensagem_id' => (string) $resposta->json('data.id'),
+        ])
+        ->and($pedido['message']['android']['notification']['tag'])->toBe('chat_corrida:'.$resposta->json('data.id'));
+});
+
+it('a resposta do passageiro chega por push no celular do motorista', function () {
+    firebaseRespondendo();
+    config(['services.fcm.credenciais' => credenciaisFirebaseDeTeste()]);
+    [$corrida, $motorista, $passageiro] = corridaComConversa();
+    DispositivoPush::create(['user_id' => $motorista->id, 'perfil' => 'motorista', 'token' => 'celular-do-carlos']);
+    DispositivoPush::create(['user_id' => $passageiro->id, 'perfil' => 'passageiro', 'token' => 'celular-da-ana']);
+
+    $this->actingAs($passageiro, 'jwt')->postJson("/api/corridas/{$corrida->id}/mensagens", [
+        'conteudo' => 'Já estou descendo',
+        'client_message_id' => (string) Str::uuid(),
+    ])->assertCreated();
+
+    expect(enviosDoChat()->map(fn ($envio) => $envio[0]['message']['token'])->all())->toBe(['celular-do-carlos'])
+        ->and(enviosDoChat()[0][0]['message']['notification']['title'])->toBe('Ana · Passageiro')
+        ->and(Notificacao::count())->toBe(1);
+});
+
+it('reenviar a mesma mensagem não repete o push', function () {
+    firebaseRespondendo();
+    config(['services.fcm.credenciais' => credenciaisFirebaseDeTeste()]);
+    [$corrida, $motorista, $passageiro] = corridaComConversa();
+    DispositivoPush::create(['user_id' => $passageiro->id, 'perfil' => 'passageiro', 'token' => 'celular-da-ana']);
+    $uuid = (string) Str::uuid();
+
+    foreach ([1, 2] as $tentativa) {
+        $this->actingAs($motorista, 'jwt')->postJson("/api/corridas/{$corrida->id}/mensagens", [
+            'conteudo' => 'Pode vir, estou te aguardando.',
+            'client_message_id' => $uuid,
+        ])->assertCreated();
+    }
+
+    expect(enviosDoChat())->toHaveCount(1);
+});
+
+it('quem é motorista e passageiro na mesma conta não recebe o próprio aviso', function () {
+    firebaseRespondendo();
+    config(['services.fcm.credenciais' => credenciaisFirebaseDeTeste()]);
+    [$corrida, $motorista] = corridaComConversa();
+    Passageiro::whereKey($corrida->passageiro_id)->update(['user_id' => $motorista->id]);
+    DispositivoPush::create(['user_id' => $motorista->id, 'perfil' => 'passageiro', 'token' => 'mesmo-celular']);
+
+    $this->actingAs($motorista, 'jwt')->postJson("/api/corridas/{$corrida->id}/mensagens", [
+        'conteudo' => 'Teste',
+        'client_message_id' => (string) Str::uuid(),
+    ]);
+
+    expect(enviosDoChat())->toHaveCount(0);
+});
+
+it('falha no Firebase não impede a mensagem de ser gravada', function () {
+    firebaseRespondendo(500, ['error' => ['status' => 'INTERNAL']]);
+    config(['services.fcm.credenciais' => credenciaisFirebaseDeTeste()]);
+    [$corrida, $motorista, $passageiro] = corridaComConversa();
+    DispositivoPush::create(['user_id' => $passageiro->id, 'perfil' => 'passageiro', 'token' => 'celular-da-ana']);
+
+    $this->actingAs($motorista, 'jwt')->postJson("/api/corridas/{$corrida->id}/mensagens", [
+        'conteudo' => 'Cheguei!',
+        'client_message_id' => (string) Str::uuid(),
+    ])->assertCreated();
+
+    expect(CorridaMensagem::where('corrida_id', $corrida->id)->count())->toBe(1)
+        ->and(DispositivoPush::count())->toBe(1);
+});
+
+it('sem Firebase configurado o chat não manda push', function () {
+    firebaseRespondendo();
+    config(['services.fcm.credenciais' => null]);
+    [$corrida, $motorista, $passageiro] = corridaComConversa();
+    DispositivoPush::create(['user_id' => $passageiro->id, 'perfil' => 'passageiro', 'token' => 'celular-da-ana']);
+
+    $this->actingAs($motorista, 'jwt')->postJson("/api/corridas/{$corrida->id}/mensagens", [
+        'conteudo' => 'Cheguei!',
+        'client_message_id' => (string) Str::uuid(),
+    ])->assertCreated();
+
+    Http::assertNothingSent();
+});
+
+it('corrida encerrada não aceita mensagem e não manda push', function () {
+    firebaseRespondendo();
+    config(['services.fcm.credenciais' => credenciaisFirebaseDeTeste()]);
+    [$corrida, $motorista, $passageiro] = corridaComConversa();
+    DispositivoPush::create(['user_id' => $passageiro->id, 'perfil' => 'passageiro', 'token' => 'celular-da-ana']);
+    $corrida->update(['status_corrida' => 'finalizada']);
+
+    $this->actingAs($motorista, 'jwt')->postJson("/api/corridas/{$corrida->id}/mensagens", [
+        'conteudo' => 'Oi',
+        'client_message_id' => (string) Str::uuid(),
+    ])->assertStatus(409);
+
+    expect(enviosDoChat())->toHaveCount(0);
 });

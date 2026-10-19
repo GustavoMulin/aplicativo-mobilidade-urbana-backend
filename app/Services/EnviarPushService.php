@@ -17,10 +17,21 @@ class EnviarPushService
 {
     private const ESCOPO = 'https://www.googleapis.com/auth/firebase.messaging';
 
+    public function configurado(): bool
+    {
+        return $this->credenciais() !== null;
+    }
+
+    public function temAparelho(int $userId, string $perfil): bool
+    {
+        return DispositivoPush::where('user_id', $userId)->where('perfil', $perfil)->exists();
+    }
+
     /**
      * @param  array<string, string>  $dados  vão junto para o app (ex.: corrida_id)
+     * @param  string|null  $agrupar  tag da notificação no Android: reenviar com a mesma tag substitui a anterior
      */
-    public function paraUsuario(int $userId, string $perfil, string $titulo, string $mensagem, array $dados = []): void
+    public function paraUsuario(int $userId, string $perfil, string $titulo, string $mensagem, array $dados = [], ?string $agrupar = null): void
     {
         $credenciais = $this->credenciais();
 
@@ -31,7 +42,7 @@ class EnviarPushService
         $tokens = DispositivoPush::where('user_id', $userId)->where('perfil', $perfil)->pluck('token');
 
         foreach ($tokens as $token) {
-            $this->enviar($credenciais, (string) $token, $titulo, $mensagem, $dados);
+            $this->enviar($credenciais, (string) $token, $titulo, $mensagem, $dados, $agrupar);
         }
     }
 
@@ -39,7 +50,7 @@ class EnviarPushService
      * @param  array{project_id: string, client_email: string, private_key: string}  $credenciais
      * @param  array<string, string>  $dados
      */
-    private function enviar(array $credenciais, string $token, string $titulo, string $mensagem, array $dados): void
+    private function enviar(array $credenciais, string $token, string $titulo, string $mensagem, array $dados, ?string $agrupar): void
     {
         try {
             $resposta = Http::withToken($this->tokenDeAcesso($credenciais))
@@ -52,7 +63,11 @@ class EnviarPushService
                         'android' => [
                             'priority' => 'HIGH',
                             // canal criado pelos apps (usePushNotificacoes)
-                            'notification' => ['channel_id' => 'corridas', 'sound' => 'default'],
+                            'notification' => array_filter([
+                                'channel_id' => 'corridas',
+                                'sound' => 'default',
+                                'tag' => $agrupar,
+                            ]),
                         ],
                     ],
                 ]);

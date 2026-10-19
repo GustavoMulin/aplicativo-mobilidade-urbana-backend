@@ -40,6 +40,7 @@ class Corrida extends Model
         'tempo_embarque',
         'tempo_inicio',
         'tempo_final',
+        'cancelada_em',
         'distancia_total',
         'valor_estimado_inicial',
         'valor_negociado_final',
@@ -68,6 +69,7 @@ class Corrida extends Model
             'tempo_embarque' => 'datetime',
             'tempo_inicio' => 'datetime',
             'tempo_final' => 'datetime',
+            'cancelada_em' => 'datetime',
         ];
     }
 

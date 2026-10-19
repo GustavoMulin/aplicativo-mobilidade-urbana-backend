@@ -47,8 +47,11 @@ class MotoristaController extends Controller
     }
 
     /**
-     * Ganhos do dia (todas as corridas finalizadas hoje) e o saldo da carteira
+     * Ganhos do dia (corridas finalizadas hoje com pagamento confirmado, a
+     * mesma regra do GanhosMotoristaService da gestão, mais as taxas de
+     * cancelamento pagas no dia do cancelamento) e o saldo da carteira
      * (ver CarteiraMotoristaService: dinheiro não entra, saques descontam).
+     * corridas_hoje conta todas as finalizadas do dia.
      */
     public function ganhos(Request $request, CarteiraMotoristaService $carteira): JsonResponse
     {
@@ -68,8 +71,10 @@ class MotoristaController extends Controller
         return response()->json([
             'data' => $hoje->translatedFormat('d/m'),
             'ganhos_do_dia' => round((float) (clone $finalizadas)
+                ->where('corridas.status_pagamento', 'pago')
                 ->whereDate('corridas.tempo_final', $hoje->toDateString())
-                ->sum('corrida_financeiros.valor_liquido_motorista'), 2),
+                ->sum('corrida_financeiros.valor_liquido_motorista')
+                + $carteira->taxasDeCancelamentoNoDia($motorista, $hoje->toDateString()), 2),
             'saldo' => $carteira->saldo($motorista),
             'corridas_hoje' => (clone $finalizadas)
                 ->whereDate('corridas.tempo_final', $hoje->toDateString())
