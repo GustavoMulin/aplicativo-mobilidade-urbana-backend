@@ -253,6 +253,12 @@ it('saldo da carteira: corrida paga no app credita, em dinheiro desconta a taxa'
         ->assertJsonFragment(['tipo' => 'taxa_dinheiro', 'valor' => -1.5, 'recebido_em_maos' => 16.5])
         ->assertJsonFragment(['tipo' => 'corrida', 'valor' => 20, 'recebido_em_maos' => null]);
 
+    // o extrato fecha: o lançamento mais novo termina no saldo e cada linha
+    // anterior é o saldo menos o que veio depois
+    $movimentos = collect($this->actingAs($motorista->user, 'jwt')->getJson('/api/motorista/me/carteira')->json('movimentos'));
+    expect($movimentos->first()['saldo_apos'])->toBe(28.5)
+        ->and(round($movimentos->last()['saldo_apos'] - $movimentos->last()['valor'], 2))->toBe(0.0);
+
     $this->actingAs($motorista->user, 'jwt')
         ->getJson('/api/motorista/me/ganhos')
         ->assertJsonPath('saldo', 28.5)
