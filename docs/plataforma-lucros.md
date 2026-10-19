@@ -10,6 +10,8 @@ O painel esquerdo contém períodos Hoje (data de referência), Semanal, Mensal 
 
 Selecionar uma operação substitui o gráfico pela DRE, pendências, situação de recebimento, histórico de conferências e auditoria da corrida original. **Ver gráfico** limpa a seleção e retorna à visão do período. No celular, o gráfico fica abaixo dos indicadores, antes da lista; ao abrir uma operação, aparece somente seu detalhamento, com botão de retorno.
 
+O filtro **Resultado** oferece **Todos (ganhos e saídas)**, **Ganhos (positivos)** e **Saídas (negativos)**. O padrão Todos preserva a visão completa. A seleção considera o sinal de `lucro_liquido` de cada operação, antes da paginação e do agrupamento por hora/dia, e vale para lista, indicadores, contagens e gráfico. Assim, valores positivos e negativos do mesmo horário podem ser consultados separadamente. Valores zero e desconhecidos (`null`) aparecem somente em Todos; os intervalos temporais sem resultado continuam zerados no gráfico. Custos pendentes continuam estimados e não passam a integrar o total realizado apenas por serem positivos. Os títulos e o marcador do gráfico identificam quando a visão está filtrada.
+
 Os quatro indicadores monetários são distintos:
 
 - **Lucro líquido realizado · consolidado:** somente recebimentos/despesas comprovados no período e custos integralmente conferidos. Pode ser negativo.
@@ -98,6 +100,8 @@ Todas exigem JWT de **Gestor**, `Authorization: Bearer <token>`, `Accept: applic
 Lista e sincronização recebem `periodo=hoje|semanal|mensal|personalizado`, `data=YYYY-MM-DD`, `tipo_servico=todos|corrida|entrega`, `status_custos=consolidado|custos_pendentes` opcional e `incluir_demonstracao=0|1`. Personalizado exige `data_inicio` e `data_fim`. Lista aceita `page` e `per_page` (máximo 50); retorna `{data, meta, resumo, periodo, grafico}`. Detalhe/escritas retornam `{data}`. O identificador da rota é o ID de `plataforma_lucros`, não da corrida.
 
 A lista também retorna `grafico_granularidade: "hora" | "dia"`. Cada ponto de `grafico` contém `{data, valor, quantidade}`: em Hoje, `data` é a hora local `HH:00`; nos demais períodos é `YYYY-MM-DD`. `valor` é decimal com sinal e `quantidade` conta as operações recebidas e consolidadas daquele intervalo. Os horários usam `periodo.timezone`, não o fuso do navegador. Exemplo: `{ "data": "09:00", "valor": "37.26", "quantidade": 2 }`.
+
+Lista e sincronização também aceitam o filtro opcional `resultado=todos|positivo|negativo`. Ausência ou `todos` mantém todas as operações; `positivo` aplica `lucro_liquido > 0`, e `negativo`, `lucro_liquido < 0`. Valores diferentes retornam 422. A sincronização continua importando as fontes elegíveis do período inteiro; o filtro afeta a consulta da apuração, sem modificar os registros. Combina com período, serviço, status de custos e demonstração. A paginação não limita os totais nem o gráfico do conjunto filtrado.
 
 Conciliação de custos:
 
