@@ -6,7 +6,9 @@ Página `/plataforma-ganhos`, menu **Ganhos da plataforma**. A visão é da empr
 
 Gestão/Admin usam `financeiro.consultar` para consultar e sincronizar os retratos das corridas. `financeiro.conciliar` permite conferir custos, registrar comprovantes de recebimento e despesas avulsas. Atendimento/Suporte técnico não recebem essas permissões. A API valida o acesso independentemente dos botões visíveis.
 
-O painel esquerdo contém períodos Hoje (data de referência), Semanal, Mensal e Personalizado, serviço Todos/Corridas/Entregas, apuração Todos/Consolidado/Estimado, indicadores, gráfico e lista paginada. O direito apresenta DRE, pendências, situação de recebimento, histórico de conferências e auditoria da corrida original. No celular abre um painel por vez com botão de retorno.
+O painel esquerdo contém períodos Hoje (data de referência), Semanal, Mensal e Personalizado, serviço Todos/Corridas/Entregas, apuração Todos/Consolidado/Estimado, indicadores e lista paginada. Sem operação selecionada, o painel direito apresenta o gráfico detalhado, com total realizado acima, período, escala em reais, valores nas barras, melhor intervalo, média e quantidade de operações conciliadas. Selecionar uma barra mostra o valor e a quantidade daquele intervalo; setas e rolagem permitem consultar séries extensas sem sobrepor rótulos. Resultados negativos aparecem abaixo do zero, em vermelho, e os positivos em azul. O gráfico permanece disponível mesmo sem movimentos, com os intervalos zerados.
+
+Selecionar uma operação substitui o gráfico pela DRE, pendências, situação de recebimento, histórico de conferências e auditoria da corrida original. **Ver gráfico** limpa a seleção e retorna à visão do período. No celular, o gráfico fica abaixo dos indicadores, antes da lista; ao abrir uma operação, aparece somente seu detalhamento, com botão de retorno.
 
 Os quatro indicadores monetários são distintos:
 
@@ -60,6 +62,8 @@ Usa `GANHOS_TIMEZONE`, padrão `America/Porto_Velho`. Semana de segunda a doming
 
 Lucro realizado e gráfico usam **recebido_em**, a data da conferência do recebimento/pagamento efetivo informado. Uma corrida de sexta recebida na segunda entra no caixa da segunda. A lista inclui operações ocorridas no intervalo ou recebidas nele. Comissões pendentes são as ainda não quitadas das operações do intervalo; não representam o saldo global de todas as dívidas históricas. O resumo respeita os mesmos filtros de serviço, status e demonstração da lista.
 
+Em **Hoje**, o gráfico cobre as 24 horas locais (`00:00` a `23:00`) da data de referência e exibe a data completa acima. Semanal, Mensal e Personalizado continuam agrupados por dia, incluindo dias sem resultado. A média considera todos os intervalos exibidos, inclusive os zerados; a contagem do gráfico considera somente operações recebidas e com custos consolidados, incluindo despesas avulsas. A soma das barras corresponde ao lucro realizado do resumo, independentemente da página da lista.
+
 ## Banco e implantação
 
 Migration `2026_10_19_140000_create_plataforma_lucros_tables.php` cria somente:
@@ -92,6 +96,8 @@ Todas exigem JWT de **Gestor**, `Authorization: Bearer <token>`, `Accept: applic
 | POST   | `/api/gestao/plataforma-lucros/custos-avulsos`   | Registra subsídio, bônus ou compensação já pagos e não alocados em outra operação. Requer `financeiro.conciliar`. |
 
 Lista e sincronização recebem `periodo=hoje|semanal|mensal|personalizado`, `data=YYYY-MM-DD`, `tipo_servico=todos|corrida|entrega`, `status_custos=consolidado|custos_pendentes` opcional e `incluir_demonstracao=0|1`. Personalizado exige `data_inicio` e `data_fim`. Lista aceita `page` e `per_page` (máximo 50); retorna `{data, meta, resumo, periodo, grafico}`. Detalhe/escritas retornam `{data}`. O identificador da rota é o ID de `plataforma_lucros`, não da corrida.
+
+A lista também retorna `grafico_granularidade: "hora" | "dia"`. Cada ponto de `grafico` contém `{data, valor, quantidade}`: em Hoje, `data` é a hora local `HH:00`; nos demais períodos é `YYYY-MM-DD`. `valor` é decimal com sinal e `quantidade` conta as operações recebidas e consolidadas daquele intervalo. Os horários usam `periodo.timezone`, não o fuso do navegador. Exemplo: `{ "data": "09:00", "valor": "37.26", "quantidade": 2 }`.
 
 Conciliação de custos:
 
