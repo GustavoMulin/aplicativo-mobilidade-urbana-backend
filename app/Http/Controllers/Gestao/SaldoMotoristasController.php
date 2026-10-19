@@ -47,14 +47,7 @@ class SaldoMotoristasController extends Controller
             $query->where('tipo', $dados['tipo']);
         }
         if (! empty($dados['categoria'])) {
-            $categorias = match ($dados['categoria']) {
-                'valor_corrida', 'ganho_corrida' => ['valor_corrida', 'ganho_corrida'],
-                'recompensa', 'bonus' => ['recompensa', 'bonus'],
-                'descontos_taxas' => ['desconto', 'taxa_plataforma'],
-                'ajustes_estornos' => ['ajuste', 'estorno'],
-                default => [$dados['categoria']],
-            };
-            $query->whereIn('detalhes->categoria', $categorias);
+            $query->filtrarCategoria($dados['categoria']);
         }
         if (! empty($dados['status'])) {
             $query->where(function (Builder $q) use ($dados) {

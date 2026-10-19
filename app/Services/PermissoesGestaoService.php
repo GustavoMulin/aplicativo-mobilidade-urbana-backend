@@ -23,7 +23,7 @@ class PermissoesGestaoService
         if (in_array($recurso, ['veiculos', 'veiculo-por-placa', 'motorista-veiculos', 'adicionar-veiculo-ao-motorista'], true)) {
             return $consulta ? 'veiculos.consultar' : 'veiculos.gerenciar';
         }
-        if ($recurso === 'motoristas-saldo') {
+        if (in_array($recurso, ['motoristas-saldo', 'motoristas-ganhos'], true)) {
             return $consulta ? 'financeiro.consultar' : null;
         }
         if ($recurso === 'corridas') {

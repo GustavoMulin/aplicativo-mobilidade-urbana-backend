@@ -5,6 +5,7 @@ use App\Http\Controllers\Auth\GestorAutenticacaoController;
 use App\Http\Controllers\Corrida\ChatCorridaController;
 use App\Http\Controllers\Gestao\CorridasController;
 use App\Http\Controllers\Gestao\FotoPerfilController;
+use App\Http\Controllers\Gestao\GanhosMotoristasController;
 use App\Http\Controllers\Gestao\HistoricoCorridaSaldoController;
 use App\Http\Controllers\Gestao\RegrasAcessoController;
 use App\Http\Controllers\Gestao\SaldoMotoristasController;
@@ -30,6 +31,9 @@ Route::prefix('gestao')->name('gestao.')->group(function () {
         Route::post('broadcasting/auth', fn (Request $request) => Broadcast::auth($request))->middleware('throttle:120,1');
 
         Route::middleware('permissao.gestao')->group(function () {
+            Route::get('motoristas-ganhos/motoristas', [GanhosMotoristasController::class, 'motoristas']);
+            Route::get('motoristas-ganhos/resumo', [GanhosMotoristasController::class, 'resumo']);
+            Route::get('motoristas-ganhos/detalhes', [GanhosMotoristasController::class, 'detalhes']);
             Route::get('motoristas-saldo/{movimentacao}/corrida/mensagens', HistoricoCorridaSaldoController::class)->whereNumber('movimentacao')->name('motoristas-saldo.corrida');
             Route::get('motoristas-saldo', [SaldoMotoristasController::class, 'index'])->name('motoristas-saldo.index');
             Route::get('motoristas-saldo/{movimentacao}', [SaldoMotoristasController::class, 'show'])->whereNumber('movimentacao')->name('motoristas-saldo.show');
