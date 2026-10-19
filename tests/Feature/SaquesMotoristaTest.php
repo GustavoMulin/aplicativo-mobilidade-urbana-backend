@@ -7,6 +7,7 @@ use App\Models\Motorista;
 use App\Models\Passageiro;
 use App\Models\Saque;
 use App\Models\User;
+use App\Services\DespachoCorridaService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -73,6 +74,7 @@ function corridaPaga(Motorista $motorista, string $metodo, float $liquido, float
         'corrida_id' => $corrida->id,
         'valor_liquido_motorista' => $liquido,
         'taxa_plataforma_valor' => $taxa,
+        'valor_pago_passageiro' => $liquido + $taxa,
         'metodo_pagamento' => $metodo,
         'created_at' => now(),
         'updated_at' => now(),
@@ -246,7 +248,10 @@ it('saldo da carteira: corrida paga no app credita, em dinheiro desconta a taxa'
         ->assertJsonPath('saldo', 28.5)
         ->assertJsonPath('disponivel_para_saque', 28.5)
         ->assertJsonPath('metodo_principal', null)
-        ->assertJsonCount(3, 'movimentos');
+        ->assertJsonCount(3, 'movimentos')
+        // em dinheiro: a taxa sai do saldo e o que ele recebeu em mãos aparece à parte
+        ->assertJsonFragment(['tipo' => 'taxa_dinheiro', 'valor' => -1.5, 'recebido_em_maos' => 16.5])
+        ->assertJsonFragment(['tipo' => 'corrida', 'valor' => 20, 'recebido_em_maos' => null]);
 
     $this->actingAs($motorista->user, 'jwt')
         ->getJson('/api/motorista/me/ganhos')
@@ -363,4 +368,75 @@ it('um motorista não vê o saque do outro', function () {
     $this->actingAs(motoristaDoSaque()->user, 'jwt')
         ->getJson("/api/motorista/me/saques/{$id}")
         ->assertNotFound();
+});
+
+function corridaCanceladaComTaxa(Motorista $motorista, float $taxa, string $tipo, string $statusPagamento, ?Carbon $canceladaEm = null): void
+{
+    $passageiro = Passageiro::create(['user_id' => usuarioDoSaque('passageiro')->id, 'media_avaliacao' => null]);
+    $corrida = Corrida::create([
+        'codigo_corrida' => 'CAN-'.Str::upper(Str::random(8)),
+        'motorista_id' => $motorista->id,
+        'passageiro_id' => $passageiro->id,
+        'status_corrida' => 'cancelada',
+        'tipo_cancelamento' => $tipo,
+        'cancelado_por' => $tipo === 'nao_comparecimento' ? 'motorista' : 'passageiro',
+        'cancelada_em' => $canceladaEm ?? now(),
+        'tempo_solicitacao' => now()->subHour(),
+        'tempo_aceite' => now()->subHour(),
+        'metodo_pagamento' => 'pix',
+        'status_pagamento' => $statusPagamento,
+    ]);
+    DB::table('corrida_financeiros')->insert([
+        'corrida_id' => $corrida->id,
+        'valor_liquido_motorista' => $taxa,
+        'valor_motorista' => $taxa,
+        'taxa_plataforma_valor' => 0,
+        'taxa_cancelamento' => $taxa,
+        'valor_pago_passageiro' => $taxa,
+        'metodo_pagamento' => 'pix',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+}
+
+it('taxa de cancelamento paga entra no saldo e nos ganhos do dia do cancelamento', function () {
+    $motorista = motoristaDoSaque();
+    corridaPaga($motorista, 'pix', 20.00, 1.20);
+    corridaCanceladaComTaxa($motorista, 5.00, 'cancelamento_com_taxa', 'pago');
+    corridaCanceladaComTaxa($motorista, 4.00, 'nao_comparecimento', 'pago', now()->subDays(2));
+    // passageiro ainda não pagou a taxa: nada entra
+    corridaCanceladaComTaxa($motorista, 7.00, 'cancelamento_com_taxa', 'em_aberto');
+
+    $this->actingAs($motorista->user, 'jwt')
+        ->getJson('/api/motorista/me/carteira')
+        ->assertOk()
+        ->assertJsonPath('saldo', 29)
+        ->assertJsonCount(3, 'movimentos')
+        ->assertJsonFragment(['tipo' => 'taxa_cancelamento', 'descricao' => 'Taxa de cancelamento', 'valor' => 5])
+        ->assertJsonFragment(['tipo' => 'taxa_cancelamento', 'descricao' => 'Passageiro não compareceu', 'valor' => 4]);
+
+    $this->actingAs($motorista->user, 'jwt')
+        ->getJson('/api/motorista/me/ganhos')
+        ->assertJsonPath('ganhos_do_dia', 25)
+        ->assertJsonPath('saldo', 29)
+        ->assertJsonPath('corridas_hoje', 1);
+});
+
+it('o cancelamento grava quando aconteceu', function () {
+    Carbon::setTestNow('2026-10-19 10:30:00');
+    $motorista = motoristaDoSaque();
+    $passageiro = Passageiro::create(['user_id' => usuarioDoSaque('passageiro')->id, 'media_avaliacao' => null]);
+    $corrida = Corrida::create([
+        'codigo_corrida' => 'CAN-'.Str::upper(Str::random(8)),
+        'passageiro_id' => $passageiro->id,
+        'status_corrida' => 'solicitada',
+        'tempo_solicitacao' => now(),
+        'metodo_pagamento' => 'dinheiro',
+        'status_pagamento' => 'pendente',
+    ]);
+    DB::table('corrida_financeiros')->insert(['corrida_id' => $corrida->id, 'created_at' => now(), 'updated_at' => now()]);
+
+    app(DespachoCorridaService::class)->cancelar($corrida->id, 'passageiro', $passageiro->id, 'Mudei de ideia');
+
+    expect($corrida->fresh()->cancelada_em?->toDateTimeString())->toBe('2026-10-19 10:30:00');
 });

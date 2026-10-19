@@ -11,12 +11,15 @@ use Illuminate\Support\Facades\DB;
 /**
  * Saldo do motorista no app, como na 99: corrida paga no app (Pix ou cartão)
  * entra com o ganho líquido; corrida em dinheiro o motorista já recebeu em
- * mãos, então só sai dela a taxa da plataforma. Saques descontam, menos os
- * que falharam.
+ * mãos, então só sai dela a taxa da plataforma. A taxa de cancelamento ou de
+ * não comparecimento que o passageiro pagou é do motorista e entra também.
+ * Saques descontam, menos os que falharam.
  */
 class CarteiraMotoristaService
 {
     private const PAGOS_NO_APP = ['pix', 'cartao'];
+
+    public const CANCELAMENTOS_COM_TAXA = ['cancelamento_com_taxa', 'nao_comparecimento'];
 
     public function saldo(Motorista $motorista): float
     {
@@ -32,12 +35,28 @@ class CarteiraMotoristaService
         $sacado = (float) Saque::where('motorista_id', $motorista->id)
             ->whereIn('status', Saque::STATUS_QUE_DESCONTAM)
             ->sum('valor');
+        $taxasDeCancelamento = (float) $this->canceladasComTaxa($motorista)
+            ->sum('corrida_financeiros.valor_liquido_motorista');
 
-        return round($creditos - $taxasEmDinheiro - $sacado, 2);
+        return round($creditos + $taxasDeCancelamento - $taxasEmDinheiro - $sacado, 2);
     }
 
     /**
-     * @return array<int, array{tipo: string, id: int, descricao: string, detalhe: string, valor: float, status: string|null, quando: string|null}>
+     * Taxas de cancelamento pagas ao motorista no dia em que a corrida foi
+     * cancelada (entram nos ganhos do dia).
+     */
+    public function taxasDeCancelamentoNoDia(Motorista $motorista, string $dia): float
+    {
+        return round((float) $this->canceladasComTaxa($motorista)
+            ->whereDate(DB::raw('COALESCE(corridas.cancelada_em, corridas.updated_at)'), $dia)
+            ->sum('corrida_financeiros.valor_liquido_motorista'), 2);
+    }
+
+    /**
+     * recebido_em_maos: na corrida em dinheiro, o que o passageiro pagou direto
+     * ao motorista (só informativo, não entra no saldo).
+     *
+     * @return array<int, array{tipo: string, id: int, descricao: string, detalhe: string, valor: float, recebido_em_maos: float|null, status: string|null, quando: string|null}>
      */
     public function movimentos(Motorista $motorista, int $limite = 60): array
     {
@@ -55,6 +74,7 @@ class CarteiraMotoristaService
                 'corridas.metodo_pagamento',
                 'corrida_financeiros.valor_liquido_motorista',
                 'corrida_financeiros.taxa_plataforma_valor',
+                'corrida_financeiros.valor_pago_passageiro',
                 'produtos_corridas.nome as produto',
             ])
             ->map(function (object $corrida): array {
@@ -68,10 +88,34 @@ class CarteiraMotoristaService
                     'valor' => round($emDinheiro
                         ? -1 * (float) $corrida->taxa_plataforma_valor
                         : (float) $corrida->valor_liquido_motorista, 2),
+                    'recebido_em_maos' => $emDinheiro ? round((float) $corrida->valor_pago_passageiro, 2) : null,
                     'status' => null,
                     'quando' => (string) $corrida->tempo_final,
                 ];
             });
+
+        $cancelamentos = $this->canceladasComTaxa($motorista)
+            ->orderByDesc('corridas.id')
+            ->limit($limite)
+            ->get([
+                'corridas.id',
+                'corridas.tipo_cancelamento',
+                'corridas.cancelada_em',
+                'corridas.updated_at',
+                'corrida_financeiros.valor_liquido_motorista',
+            ])
+            ->map(fn (object $corrida): array => [
+                'tipo' => 'taxa_cancelamento',
+                'id' => (int) $corrida->id,
+                'descricao' => $corrida->tipo_cancelamento === 'nao_comparecimento'
+                    ? 'Passageiro não compareceu'
+                    : 'Taxa de cancelamento',
+                'detalhe' => 'Paga pelo passageiro',
+                'valor' => round((float) $corrida->valor_liquido_motorista, 2),
+                'recebido_em_maos' => null,
+                'status' => null,
+                'quando' => (string) ($corrida->cancelada_em ?? $corrida->updated_at),
+            ]);
 
         $saques = Saque::where('motorista_id', $motorista->id)
             ->latest('id')
@@ -83,11 +127,12 @@ class CarteiraMotoristaService
                 'descricao' => 'Saque',
                 'detalhe' => $saque->destino,
                 'valor' => $saque->status === 'falhou' ? 0.0 : round(-1 * $saque->valor, 2),
+                'recebido_em_maos' => null,
                 'status' => $saque->status,
                 'quando' => (string) $saque->created_at,
             ]);
 
-        return $corridas->concat($saques)
+        return $corridas->concat($cancelamentos)->concat($saques)
             ->sortByDesc('quando')
             ->take($limite)
             ->values()
@@ -97,6 +142,18 @@ class CarteiraMotoristaService
             ])
             ->values()
             ->all();
+    }
+
+    // cancelada com taxa já paga pelo passageiro (sem pagamento, nada entra)
+    private function canceladasComTaxa(Motorista $motorista): Builder
+    {
+        return DB::table('corridas')
+            ->join('corrida_financeiros', 'corrida_financeiros.corrida_id', '=', 'corridas.id')
+            ->where('corridas.motorista_id', $motorista->id)
+            ->where('corridas.status_corrida', 'cancelada')
+            ->whereIn('corridas.tipo_cancelamento', self::CANCELAMENTOS_COM_TAXA)
+            ->where('corridas.status_pagamento', 'pago')
+            ->where('corrida_financeiros.valor_liquido_motorista', '>', 0);
     }
 
     private function corridasFinalizadas(Motorista $motorista): Builder
