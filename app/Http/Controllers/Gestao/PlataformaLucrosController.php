@@ -19,6 +19,7 @@ class PlataformaLucrosController extends Controller
             'data_fim' => 'required_if:periodo,personalizado|nullable|date_format:Y-m-d|after_or_equal:data_inicio',
             'tipo_servico' => ['nullable', Rule::in(['todos', 'corrida', 'entrega'])],
             'status_custos' => ['nullable', Rule::in(['consolidado', 'custos_pendentes'])],
+            'resultado' => ['nullable', Rule::in(['todos', 'positivo', 'negativo'])],
             'incluir_demonstracao' => 'nullable|boolean', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50',
         ]);
         $zona = config('ganhos.timezone', 'America/Porto_Velho');
@@ -57,6 +58,12 @@ class PlataformaLucrosController extends Controller
         }
         if (! empty($dados['status_custos'])) {
             $query->where('status_custos', $dados['status_custos']);
+        }
+        // Filtra as operações antes da paginação e da agregação por hora/dia.
+        if (($dados['resultado'] ?? 'todos') === 'positivo') {
+            $query->where('lucro_liquido', '>', 0);
+        } elseif (($dados['resultado'] ?? 'todos') === 'negativo') {
+            $query->where('lucro_liquido', '<', 0);
         }
         $totais = ['lucro_realizado' => 0, 'lucro_estimado_recebido' => 0, 'comissoes_a_receber' => 0, 'online_aguardando_liquidacao' => 0, 'gmv_realizado' => 0, 'custos_pendentes' => 0, 'quantidade' => 0];
         $porHora = $dados['periodo'] === 'hoje';
