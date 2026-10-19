@@ -90,8 +90,9 @@ do ticket continua identificando o cliente. O histórico preserva os nomes da
 Cada atribuição, transferência, assunção pela gestão e retorno à fila registra
 auditoria e mensagem de sistema na mesma transação. Os tipos são
 `queue_distribution`, `manual_transfer`, `takeover_by_manager` e `queue_return`.
-O destino é nulo no retorno à fila. Tickets resolvidos ou fechados precisam
-ser reabertos antes de transferir.
+O destino é nulo no retorno à fila. Ticket finalizado (`resolved`) é somente
+consulta: não pode ser transferido nem reaberto, e um novo assunto pede um novo
+ticket.
 
 Os avisos `ticket.atualizado` e `ticket.transferido` atualizam as filas pelo
 Reverb. Operadores recebem avisos sem conteúdo e consultam as mensagens pela

@@ -597,6 +597,7 @@ class DespachoCorridaService
 
             $corrida->update([
                 'status_corrida' => 'cancelada',
+                'cancelada_em' => now(),
                 'cancelado_por' => $quem,
                 'motivo_cancelamento' => $motivo,
                 'tipo_cancelamento' => $tipoRegistrado,
@@ -660,6 +661,7 @@ class DespachoCorridaService
                     $this->aplicarTaxaAusencia($corrida);
                     $corrida->update([
                         'status_corrida' => 'cancelada',
+                        'cancelada_em' => now(),
                         'cancelado_por' => 'sistema',
                         'motivo_cancelamento' => 'Tempo máximo de espera no embarque atingido.',
                         'tipo_cancelamento' => 'nao_comparecimento',

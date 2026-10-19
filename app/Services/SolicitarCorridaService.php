@@ -152,6 +152,7 @@ class SolicitarCorridaService
         } catch (RuntimeException $erro) {
             $corrida->update([
                 'status_corrida' => 'cancelada',
+                'cancelada_em' => now(),
                 'cancelado_por' => 'sistema',
                 'motivo_cancelamento' => 'Não foi possível gerar o pagamento.',
             ]);
