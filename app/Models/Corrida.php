@@ -26,6 +26,7 @@ class Corrida extends Model
         'convidado_nome',
         'convidado_telefone',
         'cidade_id',
+        'sala_compartilhada_id',
         'veiculo_id',
         'tarifa_id',
         'multiplicador_dinamico',
@@ -143,6 +144,14 @@ class Corrida extends Model
     public function produto(): BelongsTo
     {
         return $this->belongsTo(ProdutosCorrida::class, 'produto_id');
+    }
+
+    /**
+     * @return BelongsTo<SalaCompartilhada, $this>
+     */
+    public function salaCompartilhada(): BelongsTo
+    {
+        return $this->belongsTo(SalaCompartilhada::class);
     }
 
     /**

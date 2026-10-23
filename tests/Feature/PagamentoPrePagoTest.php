@@ -1,5 +1,6 @@
 <?php
 
+use App\Contracts\GatewayPagamento;
 use App\Events\CorridaAtualizada;
 use App\Events\CorridasDisponiveisAlteradas;
 use App\Models\CobrancaPix;
@@ -9,6 +10,8 @@ use App\Models\CotacaoCorrida;
 use App\Models\MovimentoCredito;
 use App\Models\Passageiro;
 use App\Models\User;
+use App\Services\DespachoCorridaService;
+use App\Services\Pagamento\GatewayPagamentoSimulado;
 use App\Services\PagamentoCorridaService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\ConnectionException;
@@ -234,6 +237,17 @@ it('falha ao gerar o pagamento cancela o pedido e devolve o crédito', function 
 
     expect(Corrida::first()->status_corrida)->toBe('cancelada')
         ->and(app(PagamentoCorridaService::class)->saldoCredito($passageiro->id))->toBe(5.0);
+});
+
+it('CPF recusado pela AbacatePay explica o motivo ao passageiro', function () {
+    Http::fake(['api.abacatepay.com/*' => Http::response(['success' => false, 'error' => 'Invalid taxId'], 400)]);
+    $passageiro = passageiroPre();
+
+    pedirCorrida($passageiro, 'pix', 20.0)
+        ->assertStatus(409)
+        ->assertJsonPath('message', 'O pagamento pelo app não aceitou o CPF da sua conta. Confira o CPF no seu perfil ou escolha pagar em dinheiro.');
+
+    expect(Corrida::first()->status_corrida)->toBe('cancelada');
 });
 
 it('valor final maior que o pago vira pendência', function () {
@@ -544,4 +558,73 @@ it('crédito usado volta ao saldo quando a corrida é cancelada sem taxa', funct
         ->assertOk();
 
     expect(app(PagamentoCorridaService::class)->saldoCredito($passageiro->id))->toBe(8.0);
+});
+
+it('provedor simulado: o Pix sai com QR ilustrativo e o passageiro confirma pelo app', function () {
+    config(['pagamentos.gateway' => 'simulado']);
+    Http::fake();
+    $passageiro = passageiroPre();
+
+    $corridaId = pedirCorrida($passageiro, 'pix', 20.0)->assertCreated()->json('data.id') ?? Corrida::first()->id;
+
+    $pix = $this->actingAs($passageiro->user, 'jwt')->postJson("/api/corridas/{$corridaId}/pix")->assertOk()->json('cobranca');
+    expect($pix['status'])->toBe('PENDING')
+        ->and($pix['dev_mode'])->toBeTrue()
+        ->and($pix['br_code'])->toContain('PIX-SIMULADO')
+        ->and(substr(base64_decode($pix['br_code_base64']), 1, 3))->toBe('PNG')
+        ->and(Corrida::find($corridaId)->status_corrida)->toBe('aguardando_pagamento');
+
+    $this->actingAs($passageiro->user, 'jwt')->postJson("/api/corridas/{$corridaId}/pix/simular")
+        ->assertOk()
+        ->assertJsonPath('cobranca.status', 'PAID');
+
+    expect(Corrida::find($corridaId))->status_corrida->toBe('solicitada')->status_pagamento->toBe('pago');
+    // nada sai para a internet
+    Http::assertNothingSent();
+});
+
+it('provedor simulado: cartão confirmado no app libera a busca sem checkout externo', function () {
+    config(['pagamentos.gateway' => 'simulado']);
+    Http::fake();
+    $passageiro = passageiroPre();
+
+    pedirCorrida($passageiro, 'cartao', 20.0)->assertCreated();
+    $corrida = Corrida::first();
+
+    $cartao = $this->actingAs($passageiro->user, 'jwt')->postJson("/api/corridas/{$corrida->id}/cartao")->assertOk()->json('cobranca');
+    expect($cartao['url'])->toBeNull()->and($cartao['dev_mode'])->toBeTrue();
+
+    $this->actingAs($passageiro->user, 'jwt')->postJson("/api/corridas/{$corrida->id}/cartao/simular")
+        ->assertOk()
+        ->assertJsonPath('cobranca.status', 'PAID');
+
+    expect($corrida->fresh())->status_corrida->toBe('solicitada')->status_pagamento->toBe('pago');
+    Http::assertNothingSent();
+});
+
+it('provedor simulado: cancelar corrida paga estorna sem chamar ninguém', function () {
+    config(['pagamentos.gateway' => 'simulado']);
+    Http::fake();
+    $passageiro = passageiroPre();
+    pedirCorrida($passageiro, 'pix', 20.0)->assertCreated();
+    $corrida = Corrida::first();
+    $this->actingAs($passageiro->user, 'jwt')->postJson("/api/corridas/{$corrida->id}/pix")->assertOk();
+    $this->actingAs($passageiro->user, 'jwt')->postJson("/api/corridas/{$corrida->id}/pix/simular")->assertOk();
+
+    app(DespachoCorridaService::class)->cancelar($corrida->id, 'passageiro', $passageiro->id, 'Mudei de ideia');
+
+    expect($corrida->fresh()->status_pagamento)->toBe('estornado')
+        ->and(CobrancaPix::where('corrida_id', $corrida->id)->first()->estornado_em)->not->toBeNull();
+    Http::assertNothingSent();
+});
+
+it('pagamento simulado não roda em produção sem liberação explícita', function () {
+    config(['pagamentos.gateway' => 'simulado', 'pagamentos.simulado_em_producao' => false]);
+    app()->detectEnvironment(fn () => 'production');
+
+    expect(fn () => app(GatewayPagamento::class))
+        ->toThrow(InvalidArgumentException::class, 'Pagamento simulado não roda em produção');
+
+    config(['pagamentos.simulado_em_producao' => true]);
+    expect(app(GatewayPagamento::class))->toBeInstanceOf(GatewayPagamentoSimulado::class);
 });

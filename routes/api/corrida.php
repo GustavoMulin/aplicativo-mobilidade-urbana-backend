@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Route;
 // Route::middleware('throttle:30,1')->group(function () {
 Route::get('buscar-endereco', [CorridaController::class, 'buscarEndereco']);
 Route::post('ajustar-ponto-embarque', [CorridaController::class, 'ajustarPontoEmbarque']);
+Route::get('pontos-embarque', [CorridaController::class, 'pontosDeEmbarque'])->middleware('throttle:60,1');
 Route::get('calculos-entre-endereco', [CorridaController::class, 'calculoEntreEnderecos']);
 Route::post('tracado-rota', [CorridaController::class, 'tracadoRota']);
 Route::post('navegacao-rota', [CorridaController::class, 'navegacaoRota']);
@@ -60,6 +61,7 @@ Route::get('corridas/{corrida}/pix', [CobrancaPixController::class, 'consultar']
 Route::post('corridas/{corrida}/pix/simular', [CobrancaPixController::class, 'simular'])->middleware('throttle:10,1,simular-pix');
 Route::post('corridas/{corrida}/cartao', [CobrancaCartaoController::class, 'criar'])->middleware('throttle:10,1,cobranca-cartao');
 Route::get('corridas/{corrida}/cartao', [CobrancaCartaoController::class, 'consultar']);
+Route::post('corridas/{corrida}/cartao/simular', [CobrancaCartaoController::class, 'simular'])->middleware('throttle:10,1,simular-cartao');
 
 Route::get('corridas/{corrida}/mensagens', [ChatCorridaController::class, 'index'])->whereNumber('corrida');
 Route::post('corridas/{corrida}/mensagens', [ChatCorridaController::class, 'store'])->whereNumber('corrida')->middleware('throttle:60,1');

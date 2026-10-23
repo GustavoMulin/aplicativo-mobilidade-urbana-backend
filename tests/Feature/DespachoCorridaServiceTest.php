@@ -327,6 +327,7 @@ it('preserva um raio inicial de tarifa maior que o limite global', function () {
 it('agrega reputacao e mantem consultas constantes com muitas ofertas', function () {
     [$motorista] = criarMotoristaDespacho(true);
     $passageiro = criarPassageiroDespacho();
+    config(['avaliacoes.minimo_corridas_para_media' => 1]);
     $historica = criarCorridaDespacho($passageiro, status: 'finalizada');
     AvaliacoesCorrida::create([
         'corrida_id' => $historica->id,
@@ -725,6 +726,14 @@ it('mostra a nota media e o total de corridas do motorista para o passageiro', f
     $passageiro = criarPassageiroDespacho();
     $corrida = criarCorridaDespacho($passageiro);
     $servico->aceitar($motorista, $corrida->id);
+
+    // duas notas não bastam: a primeira avaliação viraria a média inteira
+    $this->actingAs($passageiro->user, 'jwt')->getJson('/api/minha-corrida-atual')
+        ->assertOk()
+        ->assertJsonPath('motorista_info.nota', null)
+        ->assertJsonPath('motorista_info.corridas', 2);
+
+    config(['avaliacoes.minimo_corridas_para_media' => 2]);
 
     $this->actingAs($passageiro->user, 'jwt')->getJson('/api/minha-corrida-atual')
         ->assertOk()

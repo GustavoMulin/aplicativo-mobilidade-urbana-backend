@@ -31,8 +31,12 @@ class TicketResource extends JsonResource
                 'tempo_espera_segundos' => $this->status === 'waiting' && $this->fila_entrada_em
                     ? max(0, (int) $this->fila_entrada_em->diffInSeconds(now())) : 0,
                 'calculado_em' => now()->toISOString(),
-                'mensagem' => $this->status === 'waiting' && $this->fila_posicao !== null
-                    ? FilaTicketsService::mensagemEspera($this->fila_posicao) : null,
+                'mensagem' => match (true) {
+                    $this->status === 'waiting' && $this->fila_posicao !== null => FilaTicketsService::mensagemEspera($this->fila_posicao),
+                    // antes de alguém assumir, quem pediu ajuda também vê a vez dele, na fila geral
+                    $this->status === 'open' && $this->gestor_responsavel_id === null && ! $request->user() instanceof Gestor => FilaTicketsService::mensagemEspera(FilaTicketsService::aFrenteNaFilaGeral($this->resource)),
+                    default => null,
+                },
             ],
             'created_at' => $this->created_at?->toISOString(),
         ];

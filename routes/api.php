@@ -16,6 +16,7 @@ Route::middleware('auth:jwt')->group(function () {
     require __DIR__.'/api/motorista.php';
     require __DIR__.'/api/passageiro.php';
     require __DIR__.'/api/corrida.php';
+    require __DIR__.'/api/compartilhada.php';
     require __DIR__.'/api/tarifa.php';
     require __DIR__.'/api/produto.php';
     require __DIR__.'/api/publicidade.php';

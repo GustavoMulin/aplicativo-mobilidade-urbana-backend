@@ -7,6 +7,7 @@ use App\Http\Controllers\Motorista\MetodosResgateController;
 use App\Http\Controllers\Motorista\MotoristaCadastroController;
 use App\Http\Controllers\Motorista\MotoristaController;
 use App\Http\Controllers\Motorista\MotoristaDocumentoController;
+use App\Http\Controllers\Motorista\PreferenciasMotoristaController;
 use Illuminate\Support\Facades\Route;
 
 // já dentro do grupo auth:jwt (ver routes/api.php)
@@ -19,6 +20,9 @@ Route::post('motorista/cadastro/aprovar-dev', [MotoristaCadastroController::clas
 Route::get('motorista/me/veiculos', [MotoristaController::class, 'meusVeiculos']);
 Route::post('motorista/me/veiculos', [MotoristaController::class, 'cadastrarMeuVeiculo']);
 Route::get('motorista/me/estatisticas', [MotoristaController::class, 'estatisticas']);
+// viagem compartilhada: aceitar chamadas de grupo e lugares do carro
+Route::get('motorista/me/preferencias', [PreferenciasMotoristaController::class, 'mostrar']);
+Route::put('motorista/me/preferencias', [PreferenciasMotoristaController::class, 'atualizar']);
 Route::get('motorista/me/ganhos', [MotoristaController::class, 'ganhos']);
 
 // carteira, saques e para onde eles vão (chave Pix ou conta bancária)

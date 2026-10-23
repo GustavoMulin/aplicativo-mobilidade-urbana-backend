@@ -61,6 +61,15 @@ it('o usuário logado traz a nota que os motoristas deram ao passageiro', functi
         'status_corrida' => 'cancelada',
     ]);
 
+    // com menos corridas que o mínimo, a média ainda não aparece
+    $this->actingAs($usuario, 'jwt')->getJson('/api/usuario-logado')
+        ->assertOk()
+        ->assertJsonPath('nota_passageiro', null)
+        ->assertJsonPath('corridas_passageiro', 2)
+        ->assertJsonPath('minimo_corridas_para_nota', 20);
+
+    config(['avaliacoes.minimo_corridas_para_media' => 2]);
+
     $this->actingAs($usuario, 'jwt')->getJson('/api/usuario-logado')
         ->assertOk()
         ->assertJsonPath('nota_passageiro', 4.5)

@@ -1,0 +1,26 @@
+# Preencha valores locais. Este arquivo não contém segredo real.
+@oauthSandbox = https://oauth.hm.bb.com.br
+@oauthProducao = https://oauth.bb.com.br
+@bbApiBaseUrl = DEFINIR_CONFORME_OPENAPI_DA_API_CONTRATADA
+@clientId = PREENCHER_VIA_SECRET_MANAGER
+@clientSecret = PREENCHER_VIA_SECRET_MANAGER
+@basicBase64 = BASE64_DE_CLIENT_ID_DOIS_PONTOS_CLIENT_SECRET
+@developerApplicationKey = PREENCHER_VIA_SECRET_MANAGER
+@redirectUri = https://api.exemplo.com/integracoes/bb/callback
+@authorizationCode = CODIGO_DE_AUTORIZACAO
+@accessToken = ACCESS_TOKEN_OBTIDO_PELO_BACKEND
+
+### Authorization Code — abrir no navegador
+GET {{oauthSandbox}}/oauth/authorize?response_type=code&client_id={{clientId}}&redirect_uri={{redirectUri}}&scope=ESCOPO_DO_OPENAPI&state=ESTADO_ALEATORIO
+
+### Trocar code por token — somente pelo backend
+POST {{oauthSandbox}}/oauth/token
+Authorization: Basic {{basicBase64}}
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=authorization_code&code={{authorizationCode}}&redirect_uri={{redirectUri}}
+
+### Recurso de negócio — path, escopo e app key dependem da API contratada
+GET {{bbApiBaseUrl}}/CAMINHO_DEFINIDO_NO_OPENAPI?gw-app-key={{developerApplicationKey}}
+Authorization: Bearer {{accessToken}}
+Accept: application/json

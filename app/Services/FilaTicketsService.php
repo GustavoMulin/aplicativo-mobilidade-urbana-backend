@@ -75,6 +75,16 @@ class FilaTicketsService
         }
     }
 
+    /** Ninguém assumiu ainda: quantos pedidos sem atendente chegaram antes deste. */
+    public static function aFrenteNaFilaGeral(ChamadoAjuda $ticket): int
+    {
+        return ChamadoAjuda::where('status', 'open')
+            ->whereNull('gestor_responsavel_id')
+            ->where(fn ($query) => $query->where('created_at', '<', $ticket->created_at)
+                ->orWhere(fn ($empate) => $empate->where('created_at', $ticket->created_at)->where('id', '<', $ticket->id)))
+            ->count();
+    }
+
     public static function mensagemEspera(int $posicao): string
     {
         if ($posicao === 0) {
