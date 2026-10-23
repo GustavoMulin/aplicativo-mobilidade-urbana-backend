@@ -101,7 +101,7 @@ class SaldoMotoristasDemonstracaoSeeder extends Seeder
                 $posterior = $saldo + ($entrada ? $centavos : -$centavos);
                 SaldoMotorista::forceCreate([
                     'motorista_id' => $motorista->id, 'corrida_id' => $corrida->id,
-                    'tipo' => $entrada ? 'entrada' : 'saida', 'valor' => $valor,
+                    'tipo' => $entrada ? 'entrada' : 'saida', 'valor' => $valor, 'categoria' => $entrada ? 'valor_corrida' : 'taxa_plataforma',
                     'descricao' => $entrada ? 'Corrida Pop · '.$titulo : 'Taxa da plataforma · Dinheiro',
                     'metodo_pagamento' => $metodo === 'cartao' ? 'cartao_online' : $metodo,
                     'saldo_anterior' => $this->decimal($saldo), 'saldo_posterior' => $this->decimal($posterior),
@@ -130,7 +130,7 @@ class SaldoMotoristasDemonstracaoSeeder extends Seeder
                         SaldoMotorista::forceCreate([
                             'motorista_id' => $motorista->id, 'tipo' => 'saida', 'valor' => $resgate,
                             'descricao' => $status === 'concluido' ? 'Resgate bancário · Demonstração' : 'Resgate em processamento · Demonstração',
-                            'metodo_pagamento' => 'saldo_carteira',
+                            'metodo_pagamento' => 'saldo_carteira', 'categoria' => 'transferencia',
                             'saldo_anterior' => $this->decimal($saldo), 'saldo_posterior' => $this->decimal($apos),
                             'detalhes' => ['demonstracao' => self::MARCADOR, 'categoria' => 'transferencia', 'status' => $status === 'concluido' ? 'confirmado' : 'processando', 'observacao' => 'Resgate fictício para demonstração. Nenhuma transferência bancária foi executada.'],
                             'created_at' => $dataSaque, 'updated_at' => $dataSaque,
@@ -145,6 +145,7 @@ class SaldoMotoristasDemonstracaoSeeder extends Seeder
             return 6;
         });
         $this->command?->info($quantidade.' movimentações disponíveis para Motorista financeiro de teste (motorista.financeiro@example.com).');
+        $this->call(GanhosMotoristasDemonstracaoSeeder::class);
     }
 
     private function completarIdentificacao(Motorista $motorista): void
