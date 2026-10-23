@@ -20,13 +20,16 @@ use Illuminate\Support\Facades\Storage;
 /** Contas e documentos fictícios para desenvolvimento. Senha padrão: password. */
 class CadastroDesenvolvimentoSeeder extends Seeder
 {
-    public function run(): void
+    private bool $preservarExistentes = false;
+
+    public function run(bool $preservarExistentes = false): void
     {
+        $this->preservarExistentes = $preservarExistentes;
         DB::transaction(function (): void {
             $usuarioMotorista = $this->usuario('Motorista de teste', 'motorista@example.com', '11144477735', '69999990001');
             $usuarioPassageiro = $this->usuario('Passageiro de teste', 'passageiro@example.com', '12345678909', '69999990002');
 
-            $gestor = Gestor::firstOrCreate(['email' => 'admin@example.com', 'cpf' => '52998224725'], [
+            $gestor = Gestor::firstOrCreate(['email' => 'admin@example.com'] + ($this->preservarExistentes ? [] : ['cpf' => '52998224725']), [
                 'name' => 'Gestor de teste', 'telefone' => '69999990003',
                 'data_nascimento' => '1990-01-15', 'password' => 'password',
             ]);
@@ -83,14 +86,16 @@ class CadastroDesenvolvimentoSeeder extends Seeder
             $this->documento($motorista, TipoDocumentoMotorista::NADA_CONSTA, $nadaConsta);
             $this->documento($motorista, TipoDocumentoMotorista::SEGURO_OBRIGATORIO, null);
 
-            app(CrlvVeiculoService::class)->sincronizarStatus($veiculo);
-            app(AtualizarSituacaoMotoristaService::class)->executar($motorista);
+            if (! $this->preservarExistentes || $veiculo->wasRecentlyCreated || $motorista->wasRecentlyCreated) {
+                app(CrlvVeiculoService::class)->sincronizarStatus($veiculo);
+                app(AtualizarSituacaoMotoristaService::class)->executar($motorista);
+            }
         });
     }
 
     private function usuario(string $nome, string $email, string $cpf, string $telefone): User
     {
-        return User::firstOrCreate(['email' => $email, 'cpf' => $cpf], [
+        return User::firstOrCreate(['email' => $email] + ($this->preservarExistentes ? [] : ['cpf' => $cpf]), [
             'name' => $nome, 'telefone' => $telefone, 'data_nascimento' => '1992-11-21',
             'status' => 'ativo', 'password' => 'password',
         ]);
