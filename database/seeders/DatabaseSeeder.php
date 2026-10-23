@@ -2,30 +2,14 @@
 
 namespace Database\Seeders;
 
-use App\Models\BannerPublicidade;
-use App\Models\Cidade;
-use App\Models\Corrida;
-use App\Models\CorridaDesconto;
-use App\Models\CorridaDestino;
-use App\Models\CorridaFinanceiro;
-use App\Models\Motorista;
-use App\Models\Passageiro;
-use App\Models\ProdutoCategoria;
-use App\Models\ProdutosCorrida;
-use App\Models\Tarifa;
-use App\Models\Veiculo;
-use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
 {
-    use WithoutModelEvents;
-
-    /**
-     * Seed the application's database.
-     */
     public function run(): void
     {
+        if (app()->environment(['local', 'testing'])) {
+            $this->call(DemonstracaoCompletaSeeder::class);
 
         // $ProdutosCorrida = ProdutosCorrida::factory()->create([
         //     'nome' => 'Negocia',

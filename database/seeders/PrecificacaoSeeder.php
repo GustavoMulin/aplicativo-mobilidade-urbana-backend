@@ -47,10 +47,11 @@ class PrecificacaoSeeder extends Seeder
     // o Expresso começa só com quem está bem perto
     private const RAIO_BUSCA_PRIORITARIO_KM = 2;
 
-    public function run(): void
+    public function run(bool $preservarExistentes = false): void
     {
+        $metodo = $preservarExistentes ? 'firstOrCreate' : 'updateOrCreate';
         foreach (self::PRODUTOS as $codigo => $dados) {
-            $produto = ProdutosCorrida::updateOrCreate(
+            $produto = ProdutosCorrida::$metodo(
                 ['codigo' => $codigo],
                 [
                     'nome' => $dados['nome'],
@@ -65,7 +66,7 @@ class PrecificacaoSeeder extends Seeder
 
             $valores = self::TARIFAS[$codigo];
 
-            Tarifa::updateOrCreate(
+            Tarifa::$metodo(
                 [
                     'produto_id' => $produto->id,
                     'cidade_id' => null,

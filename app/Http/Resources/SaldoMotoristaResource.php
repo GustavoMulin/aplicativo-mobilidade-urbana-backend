@@ -26,6 +26,7 @@ class SaldoMotoristaResource extends JsonResource
             'tipo' => $this->tipo,
             'valor' => $this->valor,
             'descricao' => $this->descricao,
+            'categoria' => $this->resource->categoriaEfetiva(),
             'titulo' => $this->tituloMovimentacao($metadados),
             'metodo_pagamento' => $this->metodo_pagamento,
             'status' => $metadados['status'] ?? 'confirmado',
@@ -94,7 +95,7 @@ class SaldoMotoristaResource extends JsonResource
 
     private function tituloMovimentacao(array $metadados): string
     {
-        $categoria = $metadados['categoria'] ?? null;
+        $categoria = $this->resource->categoriaEfetiva();
         if (in_array($categoria, ['valor_corrida', 'ganho_corrida'], true)) {
             $produto = $this->corrida?->produto?->nome;
             $titulo = 'Valor da corrida'.($produto ? ' · '.$produto : '');
