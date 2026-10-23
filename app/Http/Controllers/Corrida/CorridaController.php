@@ -10,20 +10,26 @@ use App\Models\Corrida;
 use App\Models\CotacaoCorrida;
 use App\Models\Motorista;
 use App\Models\Passageiro;
+use App\Models\SalaCompartilhada;
 use App\Models\User;
 use App\Services\AjustarPontoEmbarqueService;
 use App\Services\AlterarCorridaService;
 use App\Services\AumentarOfertaNegociaService;
 use App\Services\CalcularPrecoCorridaService;
+use App\Services\Compartilhada\GrupoCompartilhadoService;
+use App\Services\Compartilhada\SalaCompartilhadaService;
 use App\Services\ContabilizarEsperaCorridaService;
 use App\Services\DespachoCorridaService;
 use App\Services\EstimarChegadaService;
 use App\Services\EstimarRotaService;
 use App\Services\ObterNavegacaoService;
 use App\Services\ObterTracadoRotaService;
+use App\Services\PagamentoCorridaService;
+use App\Services\PontosDeEmbarqueService;
 use App\Services\ResolverTarifaService;
 use App\Services\SimularCorridaNegociadaService;
 use App\Services\SolicitarCorridaService;
+use App\Support\Reputacao;
 use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -93,6 +99,23 @@ class CorridaController extends Controller
             (float) $dados['latitude'],
             (float) $dados['longitude'],
         ));
+    }
+
+    /**
+     * Pontos de parada sugeridos perto do embarque marcado (entradas de
+     * shopping, aeroporto etc.).
+     */
+    public function pontosDeEmbarque(Request $request, PontosDeEmbarqueService $pontosDeEmbarque): JsonResponse
+    {
+        $dados = $request->validate([
+            'latitude' => 'required|numeric|between:-90,90|not_in:0',
+            'longitude' => 'required|numeric|between:-180,180|not_in:0',
+        ]);
+
+        return response()->json(['data' => $pontosDeEmbarque->executar(
+            (float) $dados['latitude'],
+            (float) $dados['longitude'],
+        )]);
     }
 
     /**
@@ -279,19 +302,20 @@ class CorridaController extends Controller
             'perfil' => 'sometimes|in:passageiro,motorista',
         ]);
 
+        $relacoes = [
+            'motorista:id,user_id,foto',
+            'motorista.user:id,name,telefone',
+            'passageiro:id,user_id,foto',
+            'passageiro.user:id,name',
+            'veiculo',
+            'corrida_destinos',
+            'corrida_financeiro',
+            'produto:id,nome,grupo,tipo_veiculo',
+            'opcoes.produto:id,nome,codigo,grupo,tipo_veiculo',
+        ];
         $corrida = $this->doUsuario($request, $dados['perfil'] ?? null)
             ->whereIn('status_corrida', self::STATUS_ATIVOS)
-            ->with([
-                'motorista:id,user_id,foto',
-                'motorista.user:id,name,telefone',
-                'passageiro:id,user_id,foto',
-                'passageiro.user:id,name',
-                'veiculo',
-                'corrida_destinos',
-                'corrida_financeiro',
-                'produto:id,nome,grupo,tipo_veiculo',
-                'opcoes.produto:id,nome,codigo,grupo,tipo_veiculo',
-            ])
+            ->with($relacoes)
             ->orderByDesc('id')
             ->first();
 
@@ -299,11 +323,21 @@ class CorridaController extends Controller
             return response()->json([
                 'corrida' => null,
                 'encerrada' => $this->resumoDaCanceladaRecente($request, $dados['perfil'] ?? null),
+                'sala_compartilhada' => ($dados['perfil'] ?? null) === 'motorista' ? null : $this->salaCompartilhadaAtual($request),
             ]);
         }
 
-        $this->reduzirNomes($corrida);
         $motoristaId = Motorista::where('user_id', $request->user()->id)->value('id');
+        $grupo = app(GrupoCompartilhadoService::class);
+        $comoMotorista = $motoristaId !== null && $corrida->motorista_id === (int) $motoristaId;
+
+        // na compartilhada o motorista age na corrida da próxima parada
+        if ($comoMotorista && $corrida->sala_compartilhada_id !== null) {
+            $daVez = $grupo->corridaDaVez((int) $corrida->sala_compartilhada_id);
+            $corrida = $daVez === null ? $corrida : (Corrida::with($relacoes)->find($daVez->id) ?? $corrida);
+        }
+
+        $this->reduzirNomes($corrida);
         $ocultarFotoPassageiro = $motoristaId !== null
             && $corrida->motorista_id === (int) $motoristaId
             && ! in_array($corrida->status_corrida, ['motorista_chegou', 'em_andamento'], true);
@@ -311,7 +345,8 @@ class CorridaController extends Controller
             $corrida->passageiro?->setAttribute('foto', null);
         }
 
-        if ($corrida->status_corrida === 'aceita' && $corrida->tempo_aceite !== null) {
+        // na compartilhada não há carência: depois do aceite, sair tem taxa
+        if ($corrida->status_corrida === 'aceita' && $corrida->tempo_aceite !== null && $corrida->sala_compartilhada_id === null) {
             $corrida->setAttribute(
                 'cancelamento_gratis_ate',
                 Carbon::parse($corrida->tempo_aceite)
@@ -338,6 +373,12 @@ class CorridaController extends Controller
             );
         }
 
+        // o que falta pagar agora: no Negocia, depois de pagar a oferta no
+        // pedido, só a diferença da proposta maior que foi escolhida
+        if ($corrida->status_corrida === 'aguardando_pagamento') {
+            $corrida->setAttribute('valor_a_pagar', app(PagamentoCorridaService::class)->valorDevido($corrida));
+        }
+
         $posicao = $corrida->motorista_id === null
             ? null
             : $this->despachoCorridaService->posicaoDoMotorista($corrida->motorista_id);
@@ -356,7 +397,34 @@ class CorridaController extends Controller
             'espera' => $corrida->status_corrida === 'motorista_chegou'
                 ? $this->contabilizarEsperaCorridaService->resumo($corrida)
                 : null,
+            'compartilhada' => $grupo->resumoDaCorrida($corrida, $comoMotorista),
         ]);
+    }
+
+    /**
+     * A sala compartilhada em que o passageiro está esperando o grupo fechar.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function salaCompartilhadaAtual(Request $request): ?array
+    {
+        $passageiroId = Passageiro::where('user_id', $request->user()->id)->value('id');
+
+        if ($passageiroId === null) {
+            return null;
+        }
+
+        $salas = app(SalaCompartilhadaService::class);
+        $participacao = $salas->participacaoAtual((int) $passageiroId);
+
+        if ($participacao === null) {
+            return null;
+        }
+
+        $salas->processar($participacao->sala_id);
+        $sala = SalaCompartilhada::find($participacao->sala_id);
+
+        return $sala === null ? null : $salas->resumo($sala, (int) $passageiroId);
     }
 
     /**
@@ -420,15 +488,16 @@ class CorridaController extends Controller
             ->avg('nota');
 
         $telefone = $usuario->telefone;
+        $finalizadas = (clone $corridasDoMotorista)
+            ->where('status_corrida', 'finalizada')
+            ->count();
 
         return [
             'nome' => $this->primeiroNome((string) $usuario->name),
             'foto' => $motorista->foto,
             'telefone' => is_string($telefone) ? $telefone : null,
-            'nota' => $nota === null ? null : round((float) $nota, 2),
-            'corridas' => (clone $corridasDoMotorista)
-                ->where('status_corrida', 'finalizada')
-                ->count(),
+            'nota' => Reputacao::media($nota, $finalizadas),
+            'corridas' => $finalizadas,
         ];
     }
 
@@ -459,6 +528,9 @@ class CorridaController extends Controller
             ->avg('nota');
 
         $telefone = $passageiro->user()->value('telefone');
+        $finalizadas = (clone $corridasDoPassageiro)
+            ->where('status_corrida', 'finalizada')
+            ->count();
         $convidado = $corrida->convidado_nome !== null;
         $fotoLiberada = ! $convidado
             && in_array($corrida->status_corrida, ['motorista_chegou', 'em_andamento'], true);
@@ -471,10 +543,8 @@ class CorridaController extends Controller
             'telefone' => $convidado
                 ? $corrida->convidado_telefone
                 : (is_string($telefone) ? $telefone : null),
-            'nota' => $nota === null ? null : round((float) $nota, 2),
-            'corridas' => (clone $corridasDoPassageiro)
-                ->where('status_corrida', 'finalizada')
-                ->count(),
+            'nota' => Reputacao::media($nota, $finalizadas),
+            'corridas' => $finalizadas,
         ];
     }
 

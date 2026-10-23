@@ -51,6 +51,11 @@ class AlterarCorridaService
             return false;
         }
 
+        // na compartilhada a rota é do grupo: o destino de um muda o de todos
+        if ($corrida->sala_compartilhada_id !== null) {
+            return false;
+        }
+
         // no Negocia o preço é a oferta do passageiro: mudar o trajeto, mesmo
         // durante a negociação, recalcularia pela tarifa e apagaria a oferta
         return ! $this->precoNegociado($corrida);

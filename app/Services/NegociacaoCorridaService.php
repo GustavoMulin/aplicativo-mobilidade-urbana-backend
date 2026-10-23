@@ -11,13 +11,15 @@ use App\Models\CorridaNegociacoes;
 use App\Models\Motorista;
 use App\Models\StatusBusca;
 use App\Support\Avisar;
+use App\Support\Reputacao;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 /**
  * Negocia: o passageiro oferece um valor, cada motorista aceita esse valor ou
  * manda outro, e o passageiro escolhe uma das propostas. No Pix e no cartão a
- * cobrança só é gerada depois da escolha, e o motorista sai quando ela é paga.
+ * oferta é paga no pedido; escolher uma proposta maior cobra só a diferença,
+ * e o motorista sai quando ela é paga.
  */
 class NegociacaoCorridaService
 {
@@ -248,7 +250,7 @@ class NegociacaoCorridaService
                 'motorista' => [
                     'nome' => $nome === '' ? 'Motorista' : explode(' ', $nome)[0],
                     'foto' => $proposta->motorista?->foto,
-                    'nota' => isset($notas[$proposta->motorista_id]) ? round((float) $notas[$proposta->motorista_id], 2) : null,
+                    'nota' => Reputacao::media($notas[$proposta->motorista_id] ?? null, (int) ($totais[$proposta->motorista_id] ?? 0)),
                     'corridas' => (int) ($totais[$proposta->motorista_id] ?? 0),
                 ],
                 'veiculo' => $proposta->veiculo === null ? null : [
@@ -304,9 +306,9 @@ class NegociacaoCorridaService
     }
 
     /**
-     * O passageiro escolhe uma proposta. No dinheiro a corrida já fica com o
-     * motorista; no Pix e no cartão a cobrança é gerada agora e o motorista
-     * espera o pagamento.
+     * O passageiro escolhe uma proposta. A oferta já foi paga no pedido, então
+     * a corrida fica com o motorista na hora; só a proposta maior que a oferta
+     * gera cobrança da diferença, e o motorista espera esse pagamento.
      */
     public function escolher(int $passageiroId, int $corridaId, int $propostaId): Corrida
     {
@@ -373,10 +375,14 @@ class NegociacaoCorridaService
                 ->where('status', 'pendente')
                 ->update(['status' => 'recusada']);
 
+            // o que falta pagar: a diferença de uma proposta maior que a oferta
+            // paga no pedido (o crédito do passageiro abate primeiro)
+            $diferenca = $prePago ? $this->pagamento->valorDevido($corrida) : 0.0;
+
             $corrida->update([
                 'motorista_id' => $motorista->id,
                 'veiculo_id' => $proposta->veiculo_id,
-                'status_corrida' => $prePago ? 'aguardando_pagamento' : 'aceita',
+                'status_corrida' => $diferenca > 0.009 ? 'aguardando_pagamento' : 'aceita',
                 'status_negociacao' => 'aceita',
                 'valor_negociado_final' => $proposta->valor_passageiro,
                 'valor_estimado_inicial' => $proposta->valor_passageiro,
@@ -390,16 +396,16 @@ class NegociacaoCorridaService
 
             $this->despacho->cancelarPropostasPendentes($motorista->id, $corrida->id);
 
-            if ($prePago) {
-                $valor = (float) $proposta->valor_passageiro;
-                $usado = $this->pagamento->aplicarCredito($corrida, $valor);
+            if ($diferenca > 0.009) {
+                $usado = $this->pagamento->aplicarCredito($corrida, $diferenca);
 
-                // crédito cobriu tudo: o motorista já pode ir
-                if ($valor - $usado <= 0.009) {
+                // crédito cobriu a diferença: o motorista já pode ir
+                if ($diferenca - $usado <= 0.009) {
                     $corrida->update(['status_corrida' => 'aceita', 'status_pagamento' => 'pago']);
                 } else {
                     // dentro da transação: se a cobrança falhar, nada da
                     // escolha fica gravado e a negociação continua aberta
+                    $corrida->update(['status_pagamento' => 'pendente']);
                     $this->gerarCobranca($corrida);
                 }
             }

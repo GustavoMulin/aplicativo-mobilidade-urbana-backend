@@ -40,6 +40,7 @@ class Veiculo extends Model
         'categoria_crlv',
         'observacao',
         'categoria',
+        'assentos',
         'eletrico',
         'taxi',
         'eletrico_solicitado',

@@ -9,6 +9,7 @@ use App\Models\AvaliacoesCorrida;
 use App\Models\Corrida;
 use App\Models\Motorista;
 use App\Models\Passageiro;
+use App\Services\Compartilhada\GrupoCompartilhadoService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -35,11 +36,21 @@ class AvaliacoesCorridaController extends Controller
         ]);
 
         $perfil = $filtros['perfil'] ?? null;
+        $motoristaId = $perfil === 'passageiro' ? null : Motorista::where('user_id', $request->user()->id)->value('id');
         $corrida = $this->corridasDoUsuario($request, $perfil)
             ->where('status_corrida', 'finalizada')
             ->whereDoesntHave('avaliacoes', function (Builder $consulta) use ($request) {
                 $consulta->where('usuario_id', $request->user()->id);
             })
+            // na compartilhada o motorista avalia só no fim, em telas seguidas;
+            // o passageiro avalia ao descer, mesmo com o grupo ainda viajando
+            ->when($motoristaId !== null, fn (Builder $consulta) => $consulta->where(fn (Builder $grupo) => $grupo
+                ->whereNull('sala_compartilhada_id')
+                ->orWhere('motorista_id', '!=', $motoristaId)
+                ->orWhereNotExists(fn ($emCurso) => $emCurso
+                    ->from('corridas as do_grupo')
+                    ->whereColumn('do_grupo.sala_compartilhada_id', 'corridas.sala_compartilhada_id')
+                    ->whereIn('do_grupo.status_corrida', ['aceita', 'motorista_chegou', 'em_andamento']))))
             ->with(self::RELACOES)
             ->orderByDesc('id')
             ->first();
@@ -49,6 +60,11 @@ class AvaliacoesCorridaController extends Controller
         }
 
         $papel = $this->papelNaCorrida($request, $corrida);
+
+        // compartilhada: o motorista avalia um passageiro por vez e vê o total
+        if ($papel === 'motorista' && $corrida->sala_compartilhada_id !== null) {
+            $corrida->setAttribute('compartilhada', $this->resumoDoGrupo($corrida, (int) $request->user()->id));
+        }
 
         if ($request->boolean('registrar_padrao') && $papel === 'passageiro') {
             $avaliacao = AvaliacoesCorrida::firstOrCreate(
@@ -78,6 +94,25 @@ class AvaliacoesCorridaController extends Controller
             'corrida' => $corrida,
             'avaliando_como' => $papel,
         ]);
+    }
+
+    /**
+     * @return array{passageiros: int, posicao: int, valor_total_motorista: float}
+     */
+    private function resumoDoGrupo(Corrida $corrida, int $userId): array
+    {
+        $doGrupo = Corrida::where('sala_compartilhada_id', $corrida->sala_compartilhada_id)
+            ->where('motorista_id', $corrida->motorista_id)
+            ->where('status_corrida', 'finalizada')
+            ->pluck('id');
+        $avaliadas = AvaliacoesCorrida::whereIn('corrida_id', $doGrupo)->where('usuario_id', $userId)->count();
+        $resumo = app(GrupoCompartilhadoService::class)->resumoDaCorrida($corrida, true);
+
+        return [
+            'passageiros' => $doGrupo->count(),
+            'posicao' => min($avaliadas + 1, max($doGrupo->count(), 1)),
+            'valor_total_motorista' => (float) ($resumo['valor_total_motorista'] ?? 0),
+        ];
     }
 
     public function store(Request $request): JsonResponse

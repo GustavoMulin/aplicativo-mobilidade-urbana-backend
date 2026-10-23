@@ -9,6 +9,7 @@ use App\Models\Corrida;
 use App\Models\Passageiro;
 use App\Models\User;
 use App\Services\PerfilUsuarioService;
+use App\Support\Reputacao;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -75,12 +76,14 @@ class UsuarioController extends Controller
             ->where('avaliacoes_corridas.tipo_usuario', 'motorista')
             ->where('corridas.passageiro_id', $passageiroId)
             ->avg('avaliacoes_corridas.nota');
-        $dados = $perfis->dados($user, $perfil, $registroPerfil);
-        $dados['nota_passageiro'] = $nota === null ? null : round((float) $nota, 2);
         // o perfil do passageiro mostra quantas corridas ele já fez
-        $dados['corridas_passageiro'] = $passageiroId === null ? 0 : Corrida::where('passageiro_id', $passageiroId)
+        $corridas = $passageiroId === null ? 0 : Corrida::where('passageiro_id', $passageiroId)
             ->where('status_corrida', 'finalizada')
             ->count();
+        $dados = $perfis->dados($user, $perfil, $registroPerfil);
+        $dados['nota_passageiro'] = Reputacao::media($nota, $corridas);
+        $dados['corridas_passageiro'] = $corridas;
+        $dados['minimo_corridas_para_nota'] = Reputacao::minimoDeCorridas();
 
         return response()->json($dados);
     }

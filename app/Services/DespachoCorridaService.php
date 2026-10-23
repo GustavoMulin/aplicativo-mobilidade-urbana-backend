@@ -19,7 +19,9 @@ use App\Models\ProdutosCorrida;
 use App\Models\StatusBusca;
 use App\Models\Tarifa;
 use App\Models\Veiculo;
+use App\Services\Compartilhada\GrupoCompartilhadoService;
 use App\Support\Avisar;
+use App\Support\Reputacao;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
@@ -67,6 +69,10 @@ class DespachoCorridaService
             ->orderByDesc('id')
             ->first();
 
+        if ($corrida?->sala_compartilhada_id !== null) {
+            $corrida = app(GrupoCompartilhadoService::class)->corridaDaVez((int) $corrida->sala_compartilhada_id) ?? $corrida;
+        }
+
         if ($corrida === null && $this->onlineExpirou($status)) {
             $status?->update(['disponivel' => false]);
         }
@@ -94,11 +100,12 @@ class DespachoCorridaService
     ): StatusBusca {
         $status = app(CompartilhamentoVeiculoService::class)->atualizarPosicao($motorista, $latitude, $longitude);
 
-        $corridaId = Corrida::where('motorista_id', $motorista->id)
+        $corridaIds = Corrida::where('motorista_id', $motorista->id)
             ->whereIn('status_corrida', self::STATUS_ATIVOS_MOTORISTA)
-            ->value('id');
+            ->pluck('id');
 
-        if ($corridaId !== null) {
+        // na compartilhada o motorista está em várias corridas ao mesmo tempo
+        foreach ($corridaIds as $corridaId) {
             Avisar::semQuebrar(new MotoristaMoveu((int) $corridaId, $latitude, $longitude, (string) $status->visto_em?->toIso8601String()));
         }
 
@@ -163,10 +170,21 @@ class DespachoCorridaService
 
         $reputacoes = $this->reputacoesDosPassageiros($corridas);
         $raios = $this->raiosDasTarifas($corridas);
+        $grupo = app(GrupoCompartilhadoService::class);
+
+        // a compartilhada chega como uma chamada só, montada sobre o grupo
+        $ofertasDosGrupos = $corridas
+            ->whereNotNull('sala_compartilhada_id')
+            ->groupBy('sala_compartilhada_id')
+            ->map(fn ($doGrupo, $salaId) => $grupo->oferta((int) $salaId, $doGrupo, $status, $motorista, $veiculo, $reputacoes, $this->raioInicialKm($doGrupo->first(), $raios)));
 
         // Expresso (prioritário) primeiro; depois a mais perto
         $ofertas = $corridas
+            ->whereNull('sala_compartilhada_id')
+            ->toBase()
             ->map(fn (Corrida $corrida) => $this->montarOferta($corrida, $status, $reputacoes, $raios, $veiculo))
+            ->values()
+            ->merge($ofertasDosGrupos->values())
             ->filter()
             ->sortBy([
                 fn (array $a, array $b) => $b['prioritaria'] <=> $a['prioritaria'],
@@ -220,6 +238,10 @@ class DespachoCorridaService
             // no Negocia é o passageiro quem escolhe entre as propostas
             if ($corrida->status_negociacao === 'em_negociacao') {
                 throw new RuntimeException('Nesta corrida o passageiro escolhe o motorista. Envie sua proposta.', 409);
+            }
+
+            if ($corrida->sala_compartilhada_id !== null) {
+                return app(GrupoCompartilhadoService::class)->aceitar($this, $motorista, $corrida);
             }
 
             [$status, $veiculo, $opcao] = $this->validarMotoristaParaCorrida($motorista, $corrida);
@@ -459,9 +481,14 @@ class DespachoCorridaService
             }
 
             if ($regra['para'] === 'finalizada') {
-                app(CompartilhamentoVeiculoService::class)->retomarDisponibilidade((int) $motorista->id);
+                $grupoSegue = $corrida->sala_compartilhada_id !== null
+                    && app(GrupoCompartilhadoService::class)->motoristaAindaOcupado((int) $motorista->id);
 
-                $this->notificarFinalizacao($corrida, $motorista->user_id);
+                if (! $grupoSegue) {
+                    app(CompartilhamentoVeiculoService::class)->retomarDisponibilidade((int) $motorista->id);
+                }
+
+                $this->notificarFinalizacao($corrida, $motorista->user_id, ! $grupoSegue);
             }
 
             Avisar::semQuebrar(new CorridaAtualizada($corrida->id, $regra['para']));
@@ -513,13 +540,22 @@ class DespachoCorridaService
         });
     }
 
-    private function notificarFinalizacao(Corrida $corrida, int $userIdMotorista): void
+    private function notificarFinalizacao(Corrida $corrida, int $userIdMotorista, bool $avisarMotorista = true): void
     {
         $corrida->loadMissing(['corrida_financeiro', 'passageiro']);
         $ganho = number_format((float) $corrida->corrida_financeiro?->valor_liquido_motorista, 2, ',', '.');
         $pago = number_format((float) $corrida->corrida_financeiro?->valor_pago_passageiro, 2, ',', '.');
 
-        $this->notificarUsuario->executar($userIdMotorista, 'motorista', 'Corrida finalizada', "Você recebe R$ {$ganho} por esta corrida.");
+        if ($corrida->sala_compartilhada_id !== null) {
+            $total = app(GrupoCompartilhadoService::class)->resumoDaCorrida($corrida, true)['valor_total_motorista'] ?? 0;
+            $ganho = number_format((float) $total, 2, ',', '.');
+        }
+
+        if ($avisarMotorista) {
+            $this->notificarUsuario->executar($userIdMotorista, 'motorista', 'Corrida finalizada', $corrida->sala_compartilhada_id !== null
+                ? "Viagem compartilhada concluída. Você recebe R$ {$ganho}."
+                : "Você recebe R$ {$ganho} por esta corrida.");
+        }
 
         if ($corrida->passageiro?->user_id !== null) {
             $this->notificarUsuario->executar($corrida->passageiro->user_id, 'passageiro', 'Viagem concluída', "Valor da corrida: R$ {$pago}.");
@@ -554,11 +590,23 @@ class DespachoCorridaService
                 throw new RuntimeException('Tipo de cancelamento inválido.', 422);
             }
 
+            // motorista que desiste de um grupo devolve o grupo ao despacho
+            if ($quem === 'motorista' && $tipo === null && $corrida->sala_compartilhada_id !== null) {
+                return app(GrupoCompartilhadoService::class)->devolverAoDespacho($corrida, (int) $donoId);
+            }
+
             if ($tipo === 'nao_comparecimento') {
+                // no grupo a espera é menor: os outros passageiros estão no carro
+                $espera = $corrida->sala_compartilhada_id !== null
+                    ? (int) config('compartilhada.espera_embarque_segundos', 120)
+                    : 180;
+
                 if ($quem !== 'motorista' || $corrida->status_corrida !== 'motorista_chegou'
                     || $corrida->tempo_chegada_origem === null
-                    || Carbon::parse($corrida->tempo_chegada_origem)->diffInSeconds(now()) < 180) {
-                    throw new RuntimeException('A taxa de não comparecimento exige três minutos de espera no embarque.', 409);
+                    || Carbon::parse($corrida->tempo_chegada_origem)->diffInSeconds(now()) < $espera) {
+                    throw new RuntimeException($espera === 180
+                        ? 'A taxa de não comparecimento exige três minutos de espera no embarque.'
+                        : 'A taxa de não comparecimento exige dois minutos de espera no embarque.', 409);
                 }
 
                 $origem = $corrida->corrida_destinos()->where('tipo', 'origem')->first();
@@ -603,7 +651,15 @@ class DespachoCorridaService
                 'tipo_cancelamento' => $tipoRegistrado,
             ]);
 
-            if ($motoristaId !== null) {
+            if ($tipoRegistrado === 'nao_comparecimento') {
+                app(GrupoCompartilhadoService::class)->repartirMultaComOsOutros($corrida);
+            }
+
+            // no grupo o carro só pula o ponto de quem saiu e segue com os outros
+            $grupoSegue = $motoristaId !== null && $corrida->sala_compartilhada_id !== null
+                && app(GrupoCompartilhadoService::class)->motoristaAindaOcupado((int) $motoristaId);
+
+            if ($motoristaId !== null && ! $grupoSegue) {
                 app(CompartilhamentoVeiculoService::class)->retomarDisponibilidade((int) $motoristaId);
             }
 
@@ -616,12 +672,14 @@ class DespachoCorridaService
 
             $motoristaUserId = $motoristaId !== null ? Motorista::whereKey($motoristaId)->value('user_id') : null;
             if ($quem !== 'motorista' && $motoristaUserId !== null) {
-                $this->notificarUsuario->executar((int) $motoristaUserId, 'motorista', 'Corrida cancelada', $quem === 'passageiro'
-                    ? 'O passageiro cancelou a corrida. Você voltou a receber chamadas.'
-                    : 'A corrida foi cancelada. Você voltou a receber chamadas.', [
-                        'corrida_id' => (string) $corrida->id,
-                        'status' => 'cancelada',
-                    ]);
+                $this->notificarUsuario->executar((int) $motoristaUserId, 'motorista', 'Corrida cancelada', match (true) {
+                    $grupoSegue => 'Um passageiro do grupo saiu. Siga para a próxima parada.',
+                    $quem === 'passageiro' => 'O passageiro cancelou a corrida. Você voltou a receber chamadas.',
+                    default => 'A corrida foi cancelada. Você voltou a receber chamadas.',
+                }, [
+                    'corrida_id' => (string) $corrida->id,
+                    'status' => 'cancelada',
+                ]);
             }
 
             Avisar::semQuebrar(new CorridaAtualizada($corrida->id, 'cancelada'));
@@ -630,27 +688,42 @@ class DespachoCorridaService
             return $corrida->fresh(['corrida_destinos', 'corrida_financeiro']);
         });
 
+        if ($cancelada->status_corrida !== 'cancelada') {
+            return $cancelada;
+        }
+
         // estorno, crédito ou pendência, fora da transação
         $this->pagamento->liquidarSemQuebrar($cancelada);
+
+        // antes do aceite, o grupo é refeito para quem ficou
+        if ($cancelada->sala_compartilhada_id !== null && $cancelada->motorista_id === null) {
+            app(GrupoCompartilhadoService::class)->aoSairDoGrupo($cancelada->id);
+        }
 
         return $cancelada->fresh(['corrida_destinos', 'corrida_financeiro']);
     }
 
     public function cancelarEsperasExpiradas(): int
     {
-        $limite = max(1, (int) config('precificacao.espera_cancelamento_automatico_segundos', 720));
+        $limiteNormal = max(1, (int) config('precificacao.espera_cancelamento_automatico_segundos', 720));
+        $limiteGrupo = max(1, (int) config('compartilhada.espera_cancelamento_automatico_segundos', 300));
         $ids = Corrida::query()
             ->where('status_corrida', 'motorista_chegou')
             ->whereNotNull('tempo_chegada_origem')
-            ->where('tempo_chegada_origem', '<=', now()->subSeconds($limite))
+            ->where(fn (Builder $vencida) => $vencida
+                ->where(fn (Builder $normal) => $normal->whereNull('sala_compartilhada_id')
+                    ->where('tempo_chegada_origem', '<=', now()->subSeconds($limiteNormal)))
+                ->orWhere(fn (Builder $grupo) => $grupo->whereNotNull('sala_compartilhada_id')
+                    ->where('tempo_chegada_origem', '<=', now()->subSeconds($limiteGrupo))))
             ->pluck('id');
 
         $canceladas = 0;
 
         foreach ($ids as $corridaId) {
             try {
-                $cancelada = DB::transaction(function () use ($corridaId, $limite) {
+                $cancelada = DB::transaction(function () use ($corridaId, $limiteNormal, $limiteGrupo) {
                     $corrida = Corrida::whereKey($corridaId)->lockForUpdate()->first();
+                    $limite = $corrida?->sala_compartilhada_id !== null ? $limiteGrupo : $limiteNormal;
 
                     if ($corrida === null || $corrida->status_corrida !== 'motorista_chegou'
                         || $corrida->tempo_chegada_origem === null
@@ -666,8 +739,12 @@ class DespachoCorridaService
                         'motivo_cancelamento' => 'Tempo máximo de espera no embarque atingido.',
                         'tipo_cancelamento' => 'nao_comparecimento',
                     ]);
+                    app(GrupoCompartilhadoService::class)->repartirMultaComOsOutros($corrida);
 
-                    if ($corrida->motorista_id !== null) {
+                    $grupoSegue = $corrida->motorista_id !== null && $corrida->sala_compartilhada_id !== null
+                        && app(GrupoCompartilhadoService::class)->motoristaAindaOcupado((int) $corrida->motorista_id);
+
+                    if ($corrida->motorista_id !== null && ! $grupoSegue) {
                         app(CompartilhamentoVeiculoService::class)->retomarDisponibilidade((int) $corrida->motorista_id);
                     }
 
@@ -702,6 +779,14 @@ class DespachoCorridaService
         $financeiro = $corrida->corrida_financeiro()->first();
         if ($financeiro === null) {
             throw new RuntimeException('Dados financeiros da corrida indisponíveis.', 409);
+        }
+
+        // na compartilhada quem não aparece paga a própria parte: o motorista
+        // recebe o combinado e a fatia da plataforma vira crédito para os outros
+        if ($corrida->sala_compartilhada_id !== null) {
+            $financeiro->update(['taxa_cancelamento' => (float) $financeiro->valor_pago_passageiro]);
+
+            return;
         }
 
         $tarifaBase = (float) ($financeiro->tarifa_base ?? 0);
@@ -818,7 +903,7 @@ class DespachoCorridaService
 
         return $passageiroIds
             ->mapWithKeys(fn ($id) => [(int) $id => [
-                'passageiro_nota' => isset($medias[$id]) ? round((float) $medias[$id], 2) : null,
+                'passageiro_nota' => Reputacao::media($medias[$id] ?? null, (int) ($totais[$id] ?? 0)),
                 'passageiro_corridas' => (int) ($totais[$id] ?? 0),
             ]])
             ->all();
@@ -829,10 +914,12 @@ class DespachoCorridaService
      */
     private function raioAtualKm(Corrida $corrida, array $raios): float
     {
-        $raioTarifa = (float) ($raios[$corrida->tarifa_id] ?? 0);
-        $raioInicial = $raioTarifa > 0
-            ? $raioTarifa
-            : (float) config('precificacao.raio_busca_padrao_km');
+        $raioInicial = $this->raioInicialKm($corrida, $raios);
+
+        if ($corrida->sala_compartilhada_id !== null) {
+            return app(GrupoCompartilhadoService::class)->raioKm((int) $corrida->sala_compartilhada_id, $raioInicial);
+        }
+
         $intervalo = max(1, (int) config('precificacao.intervalo_expansao_raio_segundos'));
         $incremento = max(0.0, (float) config('precificacao.incremento_raio_busca_km'));
         $raioMaximo = max(
@@ -842,6 +929,16 @@ class DespachoCorridaService
         $etapasConcluidas = intdiv($this->segundosEmBusca($corrida), $intervalo);
 
         return min($raioMaximo, $raioInicial + ($etapasConcluidas * $incremento));
+    }
+
+    /**
+     * @param  array<int, mixed>  $raios
+     */
+    private function raioInicialKm(Corrida $corrida, array $raios): float
+    {
+        $raioTarifa = (float) ($raios[$corrida->tarifa_id] ?? 0);
+
+        return $raioTarifa > 0 ? $raioTarifa : (float) config('precificacao.raio_busca_padrao_km');
     }
 
     private function segundosEmBusca(Corrida $corrida): int
@@ -1011,6 +1108,20 @@ class DespachoCorridaService
 
         if (in_array($status, ['aguardando_pagamento', 'solicitada', 'em_busca'], true)) {
             return $gratis('Nenhum motorista aceitou sua corrida ainda.');
+        }
+
+        // depois que o motorista aceitou o grupo, sair tem taxa: ela cobre a
+        // parte do motorista, e ninguém paga pelo cancelamento alheio
+        if ($corrida->sala_compartilhada_id !== null && in_array($status, ['aceita', 'motorista_chegou'], true)) {
+            $financeiro = $corrida->corrida_financeiro()->first();
+            $taxa = round(min((float) ($financeiro->valor_motorista ?? 0), (float) ($financeiro->valor_pago_passageiro ?? 0)), 2);
+
+            return $taxa <= 0 ? $gratis('Não há taxa para este cancelamento.') : [
+                'cobra' => true,
+                'taxa' => $taxa,
+                'km_percorridos' => 0.0,
+                'motivo' => 'O motorista já aceitou o grupo. A taxa cobre a parte dele na sua viagem.',
+            ];
         }
 
         if (! in_array($status, ['aceita', 'motorista_chegou'], true)) {

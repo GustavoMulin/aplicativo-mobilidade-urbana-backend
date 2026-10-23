@@ -79,3 +79,35 @@ it('recusa motivo desconhecido e descrição curta demais', function () {
         ->postJson('/api/ajuda/chamados', ['motivo' => 'inventado', 'descricao' => 'curta'])
         ->assertUnprocessable();
 });
+
+it('mostra a vez na fila geral enquanto ninguém assumiu o ticket', function () {
+    $primeiro = passageiroAjuda();
+    $segundo = passageiroAjuda('11144477735');
+    $pedir = fn (Passageiro $passageiro) => $this->actingAs($passageiro->user, 'jwt')
+        ->postJson('/api/ajuda/tickets', [
+            'motivo' => 'outro',
+            'descricao' => 'Preciso falar com o atendimento sobre a corrida.',
+        ])
+        ->assertCreated()
+        ->json('data.id');
+
+    $ticketDoPrimeiro = $pedir($primeiro);
+    $this->travel(1)->seconds();
+    $ticketDoSegundo = $pedir($segundo);
+
+    $this->actingAs($primeiro->user, 'jwt')->getJson("/api/ajuda/tickets/$ticketDoPrimeiro")
+        ->assertOk()
+        ->assertJsonPath('data.status', 'open')
+        ->assertJsonPath('data.fila.mensagem', 'Você é o próximo da fila. Aguarde o operador iniciar seu atendimento.');
+
+    $this->actingAs($segundo->user, 'jwt')->getJson("/api/ajuda/tickets/$ticketDoSegundo")
+        ->assertOk()
+        ->assertJsonPath('data.fila.mensagem', 'Tem 1 pessoa na sua frente. Aguarde para ser atendido.');
+
+    // o primeiro foi atendido e saiu da fila geral: o segundo passa a ser o próximo
+    ChamadoAjuda::whereKey($ticketDoPrimeiro)->update(['status' => 'resolved']);
+
+    $this->actingAs($segundo->user, 'jwt')->getJson("/api/ajuda/tickets/$ticketDoSegundo")
+        ->assertOk()
+        ->assertJsonPath('data.fila.mensagem', 'Você é o próximo da fila. Aguarde o operador iniciar seu atendimento.');
+});
