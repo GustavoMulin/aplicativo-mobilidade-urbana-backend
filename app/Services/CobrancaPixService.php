@@ -2,20 +2,21 @@
 
 namespace App\Services;
 
+use App\Contracts\GatewayPagamento;
 use App\Models\CobrancaPix;
 use App\Models\Corrida;
-use Illuminate\Support\Carbon;
 use RuntimeException;
 
 /**
- * Cobrança Pix da corrida pela AbacatePay. Cobra o valor devido no momento:
- * o pré-pagamento ao pedir a corrida ou a pendência depois que ela terminou.
- * Com chave abc_dev_ a cobrança é simulada e pode ser paga pelo sandbox.
+ * Cobrança Pix da corrida pelo provedor de pagamento (GatewayPagamento). Cobra
+ * o valor devido no momento: o pré-pagamento ao pedir a corrida ou a
+ * pendência depois que ela terminou. No provedor simulado o passageiro
+ * confirma o pagamento pelo app.
  */
 class CobrancaPixService
 {
     public function __construct(
-        private readonly AbacatePayClient $abacatePay,
+        private readonly GatewayPagamento $gateway,
         private readonly PagamentoCorridaService $pagamento,
     ) {}
 
@@ -44,51 +45,32 @@ class CobrancaPixService
             throw new RuntimeException('Passageiro da corrida não encontrado.', 409);
         }
 
-        $dados = $this->abacatePay->post('/v2/transparents/create', [
-            'method' => 'PIX',
-            'data' => [
-                'amount' => $centavos,
-                'description' => "Corrida {$corrida->codigo_corrida}",
-                'expiresIn' => (int) config('abacatepay.validade_segundos'),
-                'customer' => [
-                    'name' => (string) $usuario->name,
-                    'email' => (string) $usuario->email,
-                    'cellphone' => preg_replace('/\D/', '', (string) $usuario->telefone),
-                    'taxId' => preg_replace('/\D/', '', (string) $usuario->cpf),
-                ],
-                'metadata' => ['corrida_id' => $corrida->id],
-            ],
-        ]);
+        $dados = $this->gateway->criarPix($corrida, $centavos, $usuario);
 
         return CobrancaPix::create([
             'corrida_id' => $corrida->id,
             'charge_id' => $dados['id'],
             'status' => $dados['status'],
-            'valor_centavos' => (int) $dados['amount'],
-            'br_code' => $dados['brCode'],
-            'br_code_base64' => $dados['brCodeBase64'],
-            'dev_mode' => (bool) ($dados['devMode'] ?? false),
-            'expira_em' => Carbon::parse($dados['expiresAt']),
+            'valor_centavos' => $dados['valor_centavos'],
+            'br_code' => $dados['br_code'],
+            'br_code_base64' => $dados['br_code_base64'],
+            'dev_mode' => $dados['dev_mode'],
+            'expira_em' => $dados['expira_em'],
         ]);
     }
 
     /**
-     * Reconsulta a AbacatePay; nunca confia em status vindo do aplicativo ou
+     * Reconsulta o provedor; nunca confia em status vindo do aplicativo ou
      * do corpo do webhook. $acionar=false só atualiza o registro.
      */
     public function sincronizar(CobrancaPix $cobranca, bool $acionar = true): CobrancaPix
     {
-        $dados = $this->abacatePay->get('/v2/transparents/check', ['id' => $cobranca->charge_id]);
+        $status = $this->gateway->statusPix($cobranca->charge_id);
 
-        // a resposta precisa ser da mesma cobrança consultada
-        if (($dados['id'] ?? null) !== $cobranca->charge_id) {
-            throw new RuntimeException('A AbacatePay devolveu uma cobrança diferente da consultada.', 502);
-        }
-
-        $acabouDePagar = $dados['status'] === 'PAID' && $cobranca->status !== 'PAID';
+        $acabouDePagar = $status === 'PAID' && $cobranca->status !== 'PAID';
 
         $cobranca->update([
-            'status' => $dados['status'],
+            'status' => $status,
             'pago_em' => $acabouDePagar ? now() : $cobranca->pago_em,
         ]);
 
@@ -101,15 +83,11 @@ class CobrancaPixService
 
     public function simular(CobrancaPix $cobranca): CobrancaPix
     {
-        if (! config('abacatepay.simulacao_habilitada') || ! $cobranca->dev_mode) {
+        if (! $cobranca->dev_mode) {
             throw new RuntimeException('Simulação de pagamento indisponível neste ambiente.', 409);
         }
 
-        // a AbacatePay exige o id na query string, além do corpo
-        $this->abacatePay->post(
-            '/v2/transparents/simulate-payment?'.http_build_query(['id' => $cobranca->charge_id]),
-            ['id' => $cobranca->charge_id]
-        );
+        $this->gateway->simularPix($cobranca->charge_id);
 
         return $this->sincronizar($cobranca);
     }

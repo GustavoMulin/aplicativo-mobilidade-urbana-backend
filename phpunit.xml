@@ -27,6 +27,8 @@
         <env name="DB_URL" value=""/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
+        <!-- os testes de pagamento simulam as respostas da AbacatePay; o provedor simulado tem testes próprios -->
+        <env name="PAGAMENTOS_GATEWAY" value="abacatepay"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>

@@ -2,9 +2,10 @@
 
 namespace App\Services;
 
+use App\Contracts\GatewayPagamento;
 use App\Events\CorridaAtualizada;
 use App\Events\CorridasDisponiveisAlteradas;
-use App\Exceptions\AbacatePaySemRespostaException;
+use App\Exceptions\GatewaySemRespostaException;
 use App\Exceptions\PagamentoPendenteException;
 use App\Models\CobrancaCartao;
 use App\Models\CobrancaPix;
@@ -12,6 +13,7 @@ use App\Models\Corrida;
 use App\Models\CorridaFinanceiro;
 use App\Models\MovimentoCredito;
 use App\Models\Passageiro;
+use App\Services\Compartilhada\GrupoCompartilhadoService;
 use App\Support\Avisar;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -34,7 +36,7 @@ class PagamentoCorridaService
     private const TOLERANCIA = 0.009;
 
     public function __construct(
-        private readonly AbacatePayClient $abacatePay,
+        private readonly GatewayPagamento $gateway,
         private readonly NotificarUsuarioService $notificarUsuario,
     ) {}
 
@@ -111,7 +113,9 @@ class PagamentoCorridaService
             'valor' => -$uso,
             'descricao' => "Usado na corrida {$corrida->codigo_corrida}",
         ]);
-        CorridaFinanceiro::where('corrida_id', $corrida->id)->update(['credito_aplicado' => $uso]);
+        // no Negocia o crédito pode abater o pedido e depois a diferença: guarda a soma
+        $totalUsado = -(float) MovimentoCredito::where('corrida_id', $corrida->id)->where('valor', '<', 0)->sum('valor');
+        CorridaFinanceiro::where('corrida_id', $corrida->id)->update(['credito_aplicado' => round($totalUsado, 2)]);
 
         return $uso;
     }
@@ -237,7 +241,7 @@ class PagamentoCorridaService
 
         if ($saldo < -self::TOLERANCIA) {
             if ($cobrado <= self::TOLERANCIA) {
-                // estorno sem resposta da AbacatePay fica pendente e o agendador tenta de novo
+                // estorno sem resposta do provedor fica pendente e o agendador tenta de novo
                 $concluido = $this->estornarTudo($corrida);
                 $corrida->update(['status_pagamento' => $concluido ? 'estornado' : 'estorno_pendente']);
 
@@ -273,12 +277,24 @@ class PagamentoCorridaService
      */
     public function expirarPagamentosVencidos(): int
     {
-        $limite = now()->subSeconds((int) config('abacatepay.validade_segundos', 900) + 60);
-        // no Negocia o motorista escolhido fica parado esperando: prazo menor
+        $limite = now()->subSeconds((int) config('pagamentos.validade_segundos', 900) + 60);
+        // no Negocia o motorista escolhido fica parado esperando: prazo menor,
+        // contado da escolha. O prazo geral (do pedido) não vale para ele: a
+        // cobrança só nasce na escolha, e quem negociou por 16 min perdia a
+        // corrida segundos depois de escolher
         $limiteNegocia = now()->subSeconds((int) config('precificacao.negocia_pagamento_limite_segundos', 300));
+        // na compartilhada o grupo inteiro espera quem não pagou
+        $limiteGrupo = now()->subSeconds((int) config('compartilhada.pagamento_limite_segundos', 180));
         $ids = Corrida::where('status_corrida', 'aguardando_pagamento')
             ->where(fn ($vencida) => $vencida
-                ->where('tempo_solicitacao', '<=', $limite)
+                ->where(fn ($semMotorista) => $semMotorista
+                    ->whereNull('motorista_id')
+                    ->whereNull('sala_compartilhada_id')
+                    ->where('tempo_solicitacao', '<=', $limite))
+                ->orWhere(fn ($doGrupo) => $doGrupo
+                    ->whereNull('motorista_id')
+                    ->whereNotNull('sala_compartilhada_id')
+                    ->where('tempo_solicitacao', '<=', $limiteGrupo))
                 ->orWhere(fn ($reservada) => $reservada
                     ->whereNotNull('motorista_id')
                     ->where('tempo_aceite', '<=', $limiteNegocia)))
@@ -286,7 +302,7 @@ class PagamentoCorridaService
         $canceladas = 0;
 
         foreach ($ids as $corridaId) {
-            if ($this->pagamentoConfirmadoNaAbacatePay((int) $corridaId)) {
+            if ($this->pagamentoConfirmadoNoGateway((int) $corridaId)) {
                 $this->aoConfirmarPagamento((int) $corridaId);
 
                 // pago só em parte continua aguardando: cancela e devolve o que entrou
@@ -320,6 +336,10 @@ class PagamentoCorridaService
                 $canceladas++;
                 Avisar::semQuebrar(new CorridaAtualizada($corrida->id, 'cancelada'));
                 $this->liquidarSemQuebrar($corrida);
+
+                if ($corrida->sala_compartilhada_id !== null) {
+                    app(GrupoCompartilhadoService::class)->aoSairDoGrupo($corrida->id);
+                }
             }
         }
 
@@ -327,7 +347,7 @@ class PagamentoCorridaService
     }
 
     /**
-     * Tenta de novo os estornos que ficaram sem resposta da AbacatePay.
+     * Tenta de novo os estornos que ficaram sem resposta do provedor de pagamento.
      */
     public function reprocessarEstornosPendentes(): int
     {
@@ -346,7 +366,7 @@ class PagamentoCorridaService
      * Confere todas as cobranças abertas do pedido, não só a última: um Pix
      * antigo ainda pode ter sido pago.
      */
-    private function pagamentoConfirmadoNaAbacatePay(int $corridaId): bool
+    private function pagamentoConfirmadoNoGateway(int $corridaId): bool
     {
         $pixes = CobrancaPix::where('corrida_id', $corridaId)
             ->whereIn('status', ['PENDING', 'PAID'])
@@ -397,11 +417,11 @@ class PagamentoCorridaService
         $concluido = true;
 
         foreach (CobrancaPix::where('corrida_id', $corrida->id)->where('status', 'PAID')->whereNull('estornado_em')->get() as $pix) {
-            $concluido = $this->estornar($corrida, $pix->valor_centavos, fn () => $this->abacatePay->estornarPix($pix->charge_id), $pix) && $concluido;
+            $concluido = $this->estornar($corrida, $pix->valor_centavos, fn () => $this->gateway->estornarPix($pix->charge_id), $pix) && $concluido;
         }
 
         foreach (CobrancaCartao::where('corrida_id', $corrida->id)->where('status', 'PAID')->whereNull('estornado_em')->get() as $cartao) {
-            $concluido = $this->estornar($corrida, $cartao->valor_centavos, fn () => $this->abacatePay->estornarCheckout($cartao->checkout_id), $cartao) && $concluido;
+            $concluido = $this->estornar($corrida, $cartao->valor_centavos, fn () => $this->gateway->estornarCartao($cartao->checkout_id), $cartao) && $concluido;
         }
 
         // crédito usado na corrida volta para o saldo (o extrato já fica zerado nela)
@@ -415,8 +435,8 @@ class PagamentoCorridaService
     }
 
     /**
-     * Estorno integral na AbacatePay. Só vira crédito no app quando a
-     * AbacatePay recusou o estorno E confirma que a cobrança continua paga;
+     * Estorno integral no provedor. Só vira crédito no app quando o
+     * provedor recusou o estorno E confirma que a cobrança continua paga;
      * sem resposta, nada é marcado e o estorno é refeito depois, porque ele
      * pode ter saído e o passageiro receberia em dobro.
      *
@@ -430,15 +450,15 @@ class PagamentoCorridaService
             $cobranca->update(['estornado_em' => now()]);
 
             return true;
-        } catch (AbacatePaySemRespostaException $erro) {
-            Log::warning('Estorno na AbacatePay sem resposta; será refeito.', [
+        } catch (GatewaySemRespostaException $erro) {
+            Log::warning('Estorno no provedor de pagamento sem resposta; será refeito.', [
                 'corrida_id' => $corrida->id,
                 'erro' => $erro->getMessage(),
             ]);
 
             return false;
         } catch (RuntimeException $erro) {
-            $situacao = $this->situacaoNaAbacatePay($cobranca);
+            $situacao = $this->situacaoNoGateway($cobranca);
 
             // recusado porque já estava estornada (ex.: outra liquidação chegou antes)
             if ($situacao === 'REFUNDED') {
@@ -448,7 +468,7 @@ class PagamentoCorridaService
             }
 
             if ($situacao !== 'PAID') {
-                Log::warning('Estorno na AbacatePay falhou e a cobrança não pôde ser conferida; será refeito.', [
+                Log::warning('Estorno no provedor de pagamento falhou e a cobrança não pôde ser conferida; será refeito.', [
                     'corrida_id' => $corrida->id,
                     'erro' => $erro->getMessage(),
                 ]);
@@ -456,7 +476,7 @@ class PagamentoCorridaService
                 return false;
             }
 
-            Log::warning('Estorno na AbacatePay recusado; valor convertido em crédito.', [
+            Log::warning('Estorno no provedor de pagamento recusado; valor convertido em crédito.', [
                 'corrida_id' => $corrida->id,
                 'erro' => $erro->getMessage(),
             ]);
@@ -475,14 +495,12 @@ class PagamentoCorridaService
         }
     }
 
-    private function situacaoNaAbacatePay(CobrancaPix|CobrancaCartao $cobranca): ?string
+    private function situacaoNoGateway(CobrancaPix|CobrancaCartao $cobranca): ?string
     {
         try {
-            $dados = $cobranca instanceof CobrancaPix
-                ? $this->abacatePay->get('/v2/transparents/check', ['id' => $cobranca->charge_id])
-                : $this->abacatePay->get('/v2/checkouts/get', ['id' => $cobranca->checkout_id]);
-
-            return is_string($dados['status'] ?? null) ? $dados['status'] : null;
+            return $cobranca instanceof CobrancaPix
+                ? $this->gateway->statusPix($cobranca->charge_id)
+                : $this->gateway->statusCartao($cobranca->checkout_id);
         } catch (RuntimeException) {
             return null;
         }

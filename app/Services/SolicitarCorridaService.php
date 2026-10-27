@@ -10,14 +10,16 @@ use App\Models\CorridaOpcao;
 use App\Models\CotacaoCorrida;
 use App\Models\Passageiro;
 use App\Models\User;
+use App\Services\Compartilhada\SalaCompartilhadaService;
 use App\Support\Avisar;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 
 class SolicitarCorridaService
 {
-    private const STATUS_ATIVOS = [
+    public const STATUS_ATIVOS = [
         'aguardando_pagamento',
         'solicitada',
         'em_busca',
@@ -66,8 +68,9 @@ class SolicitarCorridaService
         // valor em aberto de corrida anterior bloqueia qualquer novo pedido
         $pagamento->exigirSemPendencia($passageiro->id);
 
-        // no Negocia a cobrança só é gerada depois que o passageiro escolhe a proposta
-        $prePago = ! $negociada && $pagamento->ehPrePago($metodoPagamento);
+        // Pix e cartão pagam no pedido, também no Negocia (a oferta do
+        // passageiro): os motoristas só veem a corrida depois do pagamento
+        $prePago = $pagamento->ehPrePago($metodoPagamento);
 
         $corrida = DB::transaction(function () use ($cotacao, $categoria, $categorias, $passageiro, $metodoPagamento, $prePago, $pagamento, $convidado, $negociada, $aceiteAutomatico) {
             // trava o passageiro: dois pedidos simultâneos não criam duas
@@ -86,6 +89,10 @@ class SolicitarCorridaService
 
             if ($emAndamento) {
                 throw new RuntimeException('Você já tem uma corrida em andamento.', 409);
+            }
+
+            if (app(SalaCompartilhadaService::class)->participacaoAtual($passageiro->id) !== null) {
+                throw new RuntimeException('Você está numa sala compartilhada. Saia dela para pedir outra corrida.', 409);
             }
 
             $corrida = Corrida::create([
@@ -138,10 +145,11 @@ class SolicitarCorridaService
     }
 
     /**
-     * Gera o Pix ou o checkout do cartão logo após criar a corrida. Se a
-     * AbacatePay falhar, a corrida é cancelada sem cobrança (e o crédito volta).
+     * Gera o Pix ou o checkout do cartão logo após criar a corrida. Se o
+     * provedor de pagamento falhar, a corrida é cancelada sem cobrança (e o
+     * crédito volta).
      */
-    private function gerarCobranca(Corrida $corrida, PagamentoCorridaService $pagamento): void
+    public function gerarCobranca(Corrida $corrida, PagamentoCorridaService $pagamento): void
     {
         try {
             if ($corrida->metodo_pagamento === 'pix') {
@@ -158,8 +166,19 @@ class SolicitarCorridaService
             ]);
             $pagamento->liquidarSemQuebrar($corrida);
 
+            Log::warning('Cobrança da corrida não gerada.', [
+                'corrida_id' => $corrida->id,
+                'metodo' => $corrida->metodo_pagamento,
+                'erro' => $erro->getMessage(),
+            ]);
+
+            // o provedor recusa CPF inválido ou de exemplo: tentar de novo não resolve
+            $cpfRecusado = str_contains(mb_strtolower($erro->getMessage()), 'taxid');
+
             throw new RuntimeException(
-                'Não foi possível gerar o pagamento agora. Tente de novo ou escolha pagar em dinheiro.',
+                $cpfRecusado
+                    ? 'O pagamento pelo app não aceitou o CPF da sua conta. Confira o CPF no seu perfil ou escolha pagar em dinheiro.'
+                    : 'Não foi possível gerar o pagamento agora. Tente de novo ou escolha pagar em dinheiro.',
                 409,
                 $erro
             );
@@ -303,7 +322,7 @@ class SolicitarCorridaService
         ];
     }
 
-    private function gerarCodigo(): string
+    public function gerarCodigo(): string
     {
         do {
             $codigo = 'C'.now()->format('ymd').strtoupper(Str::random(5));

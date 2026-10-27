@@ -56,7 +56,7 @@ class CarteiraMotoristaService
      * recebido_em_maos: na corrida em dinheiro, o que o passageiro pagou direto
      * ao motorista (só informativo, não entra no saldo).
      *
-     * @return array<int, array{tipo: string, id: int, descricao: string, detalhe: string, valor: float, recebido_em_maos: float|null, status: string|null, quando: string|null}>
+     * @return array<int, array{tipo: string, id: int, descricao: string, detalhe: string, valor: float, saldo_apos: float, recebido_em_maos: float|null, status: string|null, quando: string|null}>
      */
     public function movimentos(Motorista $motorista, int $limite = 60): array
     {
@@ -132,15 +132,24 @@ class CarteiraMotoristaService
                 'quando' => (string) $saque->created_at,
             ]);
 
+        // extrato: do mais novo para o mais velho, cada linha com o saldo que
+        // ficou depois dela (o mais novo termina no saldo atual)
+        $saldo = $this->saldo($motorista);
+
         return $corridas->concat($cancelamentos)->concat($saques)
             ->sortByDesc('quando')
             ->take($limite)
             ->values()
-            ->map(fn (array $movimento): array => [
-                ...$movimento,
-                'quando' => $movimento['quando'] === '' ? null : Carbon::parse($movimento['quando'])->toIso8601String(),
-            ])
-            ->values()
+            ->map(function (array $movimento) use (&$saldo): array {
+                $saldoApos = round($saldo, 2);
+                $saldo -= $movimento['valor'];
+
+                return [
+                    ...$movimento,
+                    'saldo_apos' => $saldoApos,
+                    'quando' => $movimento['quando'] === '' ? null : Carbon::parse($movimento['quando'])->toIso8601String(),
+                ];
+            })
             ->all();
     }
 

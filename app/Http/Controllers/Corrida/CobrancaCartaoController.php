@@ -45,6 +45,19 @@ class CobrancaCartaoController extends Controller
         return $this->responder(fn () => $this->cobrancaCartao->sincronizar($cobranca));
     }
 
+    // provedor simulado: o passageiro confirma o pagamento no formulário do app
+    public function simular(Request $request, int $corrida): JsonResponse
+    {
+        $corrida = $this->corridaDoPassageiro($request, $corrida);
+        $cobranca = CobrancaCartao::where('corrida_id', $corrida->id)->latest('id')->first();
+
+        if ($cobranca === null) {
+            return response()->json(['message' => 'Abra o pagamento no cartão antes de confirmar.'], 409);
+        }
+
+        return $this->responder(fn () => $this->cobrancaCartao->simular($cobranca));
+    }
+
     private function corridaDoPassageiro(Request $request, int $corrida): Corrida
     {
         $passageiroId = Passageiro::where('user_id', $request->user()->id)->value('id');

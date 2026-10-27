@@ -23,6 +23,8 @@ use Illuminate\Database\Eloquent\SoftDeletes;
     'ear',
     'observacao',
     'status',
+    'aceita_compartilhada',
+    'compartilhada_suspensa_ate',
 ])]
 
 class Motorista extends Model
@@ -41,6 +43,8 @@ class Motorista extends Model
             'data_nascimento' => 'date:Y-m-d',
             'primeira_habilitacao' => 'date:Y-m-d',
             'data_emissao' => 'date:Y-m-d',
+            'aceita_compartilhada' => 'boolean',
+            'compartilhada_suspensa_ate' => 'datetime',
         ];
     }
 

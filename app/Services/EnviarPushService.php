@@ -59,7 +59,8 @@ class EnviarPushService
                     'message' => [
                         'token' => $token,
                         'notification' => ['title' => $titulo, 'body' => $mensagem],
-                        'data' => array_map('strval', $dados),
+                        // vazio iria como lista ([]) e o FCM recusa: data precisa ser objeto
+                        ...($dados === [] ? [] : ['data' => array_map('strval', $dados)]),
                         'android' => [
                             'priority' => 'HIGH',
                             // canal criado pelos apps (usePushNotificacoes)

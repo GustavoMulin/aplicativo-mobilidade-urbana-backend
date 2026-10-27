@@ -12,6 +12,8 @@ use App\Models\StatusBusca;
 use App\Models\User;
 use App\Models\Veiculo;
 use App\Services\DespachoCorridaService;
+use App\Services\NegociacaoCorridaService;
+use App\Services\NotificarUsuarioService;
 use App\Services\PagamentoCorridaService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
@@ -42,18 +44,23 @@ afterEach(function () {
     Carbon::setTestNow();
 });
 
+function negPixResposta(): array
+{
+    return ['success' => true, 'error' => null, 'data' => [
+        'id' => 'pix_negocia',
+        'amount' => 1100,
+        'status' => 'PENDING',
+        'devMode' => true,
+        'brCode' => '00020101devmode',
+        'brCodeBase64' => 'data:image/png;base64,AAA',
+        'expiresAt' => now()->addMinutes(15)->toIso8601String(),
+    ]];
+}
+
 function negPixGerado(): void
 {
     Http::fake([
-        'api.abacatepay.com/v2/transparents/create' => Http::response(['success' => true, 'error' => null, 'data' => [
-            'id' => 'pix_negocia',
-            'amount' => 1100,
-            'status' => 'PENDING',
-            'devMode' => true,
-            'brCode' => '00020101devmode',
-            'brCodeBase64' => 'data:image/png;base64,AAA',
-            'expiresAt' => now()->addMinutes(15)->toIso8601String(),
-        ]]),
+        'api.abacatepay.com/v2/transparents/create' => Http::response(negPixResposta()),
     ]);
 }
 
@@ -157,6 +164,21 @@ function negPedir(Passageiro $passageiro, float $oferta = 9.0, string $metodo = 
     return Corrida::findOrFail($resposta->json('id'));
 }
 
+/** Pedido no Pix com a oferta já paga: é quando a negociação começa. */
+function negPedirPago(Passageiro $passageiro, float $oferta = 9.0, bool $aceiteAutomatico = false, bool $fakearPix = true): Corrida
+{
+    if ($fakearPix) {
+        negPixGerado();
+    }
+    $corrida = negPedir($passageiro, $oferta, 'pix', $aceiteAutomatico);
+    CobrancaPix::where('corrida_id', $corrida->id)
+        // outro id: o Pix falso da diferença volta com "pix_negocia"
+        ->update(['charge_id' => 'pix_oferta', 'status' => 'PAID', 'valor_centavos' => (int) round($oferta * 100), 'pago_em' => now()]);
+    app(PagamentoCorridaService::class)->aoConfirmarPagamento($corrida->id);
+
+    return $corrida->refresh();
+}
+
 function negPropor(Motorista $motorista, Corrida $corrida, ?float $valor = null)
 {
     return test()->actingAs($motorista->user, 'jwt')->postJson(
@@ -182,11 +204,41 @@ it('o passageiro oferece um valor dentro da faixa e a corrida abre a negociaçã
     ])->assertStatus(422)->assertJsonPath('message', 'Ofereça entre R$ 7,00 e R$ 20,00.');
 });
 
-it('no Pix o pedido do Negocia não gera cobrança antes da escolha', function () {
+it('no Pix o Negocia paga a oferta no pedido e só depois vai aos motoristas', function () {
+    negPixGerado();
     $corrida = negPedir(negPassageiro(), 9.0, 'pix');
+    $carlos = negMotorista();
 
-    expect($corrida->status_corrida)->toBe('solicitada')
-        ->and(CobrancaPix::where('corrida_id', $corrida->id)->exists())->toBeFalse();
+    expect($corrida->status_corrida)->toBe('aguardando_pagamento')
+        ->and($corrida->status_negociacao)->toBe('em_negociacao');
+    Http::assertSent(fn ($pedido) => str_contains($pedido->url(), 'transparents/create')
+        && data_get($pedido->data(), 'data.amount') === 900);
+
+    // antes do pagamento nenhum motorista vê nem propõe
+    negPropor($carlos, $corrida)->assertStatus(409);
+
+    CobrancaPix::where('corrida_id', $corrida->id)->update(['status' => 'PAID', 'valor_centavos' => 900, 'pago_em' => now()]);
+    app(PagamentoCorridaService::class)->aoConfirmarPagamento($corrida->id);
+
+    expect($corrida->refresh()->status_corrida)->toBe('solicitada')
+        ->and($corrida->status_negociacao)->toBe('em_negociacao');
+    negPropor($carlos, $corrida)->assertCreated();
+});
+
+it('no Pix, escolher quem aceitou a oferta paga no pedido manda o motorista na hora', function () {
+    $passageiro = negPassageiro();
+    $corrida = negPedirPago($passageiro, 9.0);
+    $carlos = negMotorista();
+    $proposta = negPropor($carlos, $corrida)->json('id');
+
+    $this->actingAs($passageiro->user, 'jwt')
+        ->postJson("/api/corridas/{$corrida->id}/propostas/{$proposta}/escolher")
+        ->assertOk()
+        ->assertJsonPath('status_corrida', 'aceita');
+
+    expect(CobrancaPix::where('corrida_id', $corrida->id)->count())->toBe(1)
+        ->and($corrida->refresh()->status_pagamento)->toBe('pago')
+        ->and($corrida->motorista_id)->toBe($carlos->id);
 });
 
 it('motorista que aceita o valor entra na lista para o passageiro escolher', function () {
@@ -331,10 +383,9 @@ it('o passageiro recusa uma proposta sem encerrar as demais', function () {
         ->and($corrida->refresh()->status_negociacao)->toBe('em_negociacao');
 });
 
-it('no Pix a cobrança sai na escolha e o motorista só vai depois do pagamento', function () {
-    negPixGerado();
+it('no Pix, a proposta maior que a oferta cobra só a diferença e o motorista vai depois dela', function () {
     $passageiro = negPassageiro();
-    $corrida = negPedir($passageiro, 9.0, 'pix');
+    $corrida = negPedirPago($passageiro, 9.0);
     $carlos = negMotorista();
     $proposta = negPropor($carlos, $corrida, 10.0)->json('id');
 
@@ -343,7 +394,14 @@ it('no Pix a cobrança sai na escolha e o motorista só vai depois do pagamento'
         ->assertOk()
         ->assertJsonPath('status_corrida', 'aguardando_pagamento');
 
-    $cobranca = CobrancaPix::where('corrida_id', $corrida->id)->first();
+    // 10,00 para o motorista são 10,64 para o passageiro, que já pagou 9,00
+    Http::assertSent(fn ($pedido) => str_contains($pedido->url(), 'transparents/create')
+        && data_get($pedido->data(), 'data.amount') === 164);
+    $this->actingAs($passageiro->user, 'jwt')
+        ->getJson('/api/minha-corrida-atual?perfil=passageiro')
+        ->assertOk()
+        ->assertJsonPath('corrida.valor_a_pagar', 1.64);
+    $cobranca = CobrancaPix::where('corrida_id', $corrida->id)->where('status', 'PENDING')->first();
     expect($cobranca)->not->toBeNull()
         ->and($corrida->refresh()->motorista_id)->toBe($carlos->id);
 
@@ -351,7 +409,7 @@ it('no Pix a cobrança sai na escolha e o motorista só vai depois do pagamento'
     expect(fn () => app(DespachoCorridaService::class)->aceitar($carlos, negPedir(negPassageiro())->id))
         ->toThrow(RuntimeException::class);
 
-    $cobranca->update(['status' => 'PAID', 'valor_centavos' => 1064, 'pago_em' => now()]);
+    $cobranca->update(['status' => 'PAID', 'valor_centavos' => 164, 'pago_em' => now()]);
     app(PagamentoCorridaService::class)->aoConfirmarPagamento($corrida->id);
 
     expect($corrida->refresh()->status_corrida)->toBe('aceita')
@@ -359,9 +417,8 @@ it('no Pix a cobrança sai na escolha e o motorista só vai depois do pagamento'
 });
 
 it('o motorista que espera o Pix do Negocia sabe até quando, e vê o passageiro', function () {
-    negPixGerado();
     $passageiro = negPassageiro();
-    $corrida = negPedir($passageiro, 9.0, 'pix');
+    $corrida = negPedirPago($passageiro, 9.0);
     $carlos = negMotorista();
     $proposta = negPropor($carlos, $corrida, 10.0)->json('id');
 
@@ -384,11 +441,10 @@ it('o motorista que espera o Pix do Negocia sabe até quando, e vê o passageiro
 it('Pix não pago no prazo do Negocia cancela e libera o motorista', function () {
     // o banco grava o horário sem fração de segundo
     Carbon::setTestNow(now()->startOfSecond());
-    negPixGerado();
     $passageiro = negPassageiro();
-    $corrida = negPedir($passageiro, 9.0, 'pix');
+    $corrida = negPedirPago($passageiro, 9.0);
     $carlos = negMotorista();
-    $proposta = negPropor($carlos, $corrida)->json('id');
+    $proposta = negPropor($carlos, $corrida, 10.0)->json('id');
     $this->actingAs($passageiro->user, 'jwt')
         ->postJson("/api/corridas/{$corrida->id}/propostas/{$proposta}/escolher")
         ->assertOk();
@@ -405,6 +461,28 @@ it('Pix não pago no prazo do Negocia cancela e libera o motorista', function ()
 
     expect($corrida->refresh()->status_corrida)->toBe('cancelada')
         ->and(StatusBusca::where('motorista_id', $carlos->id)->value('disponivel'))->toBeTruthy();
+});
+
+it('negociar por muito tempo não encurta o prazo do Pix depois da escolha', function () {
+    Carbon::setTestNow(now()->startOfSecond());
+    $passageiro = negPassageiro();
+    $corrida = negPedirPago($passageiro, 9.0);
+
+    // a negociação passou do prazo geral do pré-pago (15 min + 1)
+    Carbon::setTestNow(now()->addMinutes(17));
+    $carlos = negMotorista();
+    $proposta = negPropor($carlos, $corrida, 10.0)->json('id');
+    $this->actingAs($passageiro->user, 'jwt')
+        ->postJson("/api/corridas/{$corrida->id}/propostas/{$proposta}/escolher")
+        ->assertOk();
+    Http::fake([
+        'api.abacatepay.com/v2/transparents/check*' => Http::response(['success' => true, 'error' => null, 'data' => ['id' => 'pix_negocia', 'status' => 'PENDING']]),
+    ]);
+
+    Carbon::setTestNow(now()->addSeconds(30));
+    app(PagamentoCorridaService::class)->expirarPagamentosVencidos();
+
+    expect($corrida->refresh()->status_corrida)->toBe('aguardando_pagamento');
 });
 
 it('proposta de motorista que ficou ocupado não pode ser escolhida', function () {
@@ -436,14 +514,17 @@ it('no Negocia o trajeto não muda nem durante a negociação', function () {
         ->assertStatus(409);
 });
 
-it('se o Pix não puder ser gerado, a escolha não vale e a negociação continua', function () {
+it('se o Pix da diferença não puder ser gerado, a escolha não vale e a negociação continua', function () {
+    // o Pix do pedido sai; o da diferença, não
     Http::fake([
-        'api.abacatepay.com/v2/transparents/create' => Http::response(['success' => false, 'error' => 'Invalid taxId', 'data' => null], 400),
+        'api.abacatepay.com/v2/transparents/create' => Http::sequence()
+            ->push(negPixResposta())
+            ->push(['success' => false, 'error' => 'Invalid taxId', 'data' => null], 400),
     ]);
     $passageiro = negPassageiro();
-    $corrida = negPedir($passageiro, 9.0, 'pix');
+    $corrida = negPedirPago($passageiro, 9.0, fakearPix: false);
     $carlos = negMotorista();
-    $proposta = negPropor($carlos, $corrida, 8.46)->json('id');
+    $proposta = negPropor($carlos, $corrida, 10.0)->json('id');
 
     $this->actingAs($passageiro->user, 'jwt')
         ->postJson("/api/corridas/{$corrida->id}/propostas/{$proposta}/escolher")
@@ -566,11 +647,14 @@ it('o pedido grava o aceite automático e recusa valor que não é verdadeiro ou
 });
 
 it('se a escolha automática falhar, a proposta fica na lista para o passageiro decidir', function () {
-    Http::fake([
-        'api.abacatepay.com/v2/transparents/create' => Http::response(['success' => false, 'error' => 'Invalid taxId', 'data' => null], 400),
-    ]);
-    $corrida = negPedir(negPassageiro(), 9.0, 'pix', aceiteAutomatico: true);
+    $corrida = negPedir(negPassageiro(), 9.0, aceiteAutomatico: true);
     $carlos = negMotorista();
+    // o motorista ficou indisponível entre propor e ser escolhido
+    app()->instance(NegociacaoCorridaService::class, Mockery::mock(NegociacaoCorridaService::class, [
+        app(DespachoCorridaService::class),
+        app(PagamentoCorridaService::class),
+        app(NotificarUsuarioService::class),
+    ])->makePartial()->shouldReceive('escolher')->andThrow(new RuntimeException('falhou'))->getMock());
 
     negPropor($carlos, $corrida)->assertCreated()->assertJsonPath('status', 'pendente');
 

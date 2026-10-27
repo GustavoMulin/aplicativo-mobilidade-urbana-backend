@@ -366,3 +366,15 @@ it('corrida encerrada não aceita mensagem e não manda push', function () {
 
     expect(enviosDoChat())->toHaveCount(0);
 });
+
+it('aviso sem dados extras não manda data vazio, que o FCM recusa', function () {
+    firebaseRespondendo();
+    config(['services.fcm.credenciais' => credenciaisFirebaseDeTeste()]);
+    $usuario = User::factory()->create();
+    DispositivoPush::create(['user_id' => $usuario->id, 'perfil' => 'motorista', 'token' => 'token-do-motorista']);
+
+    app(EnviarPushService::class)->paraUsuario($usuario->id, 'motorista', 'Corrida finalizada', 'Você recebe R$ 10,00.');
+
+    Http::assertSent(fn (PedidoHttp $pedido) => str_contains($pedido->url(), 'fcm.googleapis.com')
+        && ! array_key_exists('data', $pedido['message']));
+});

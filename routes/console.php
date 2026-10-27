@@ -2,6 +2,8 @@
 
 // CODEX: 9 linhas alteradas; avaliação, embarque e cancelamentos. Remover após validação.
 
+use App\Services\Compartilhada\GrupoCompartilhadoService;
+use App\Services\Compartilhada\SalaCompartilhadaService;
 use App\Services\DespachoCorridaService;
 use App\Services\PagamentoCorridaService;
 use Illuminate\Foundation\Inspiring;
@@ -18,9 +20,22 @@ Schedule::call(fn () => app(DespachoCorridaService::class)->cancelarEsperasExpir
     ->withoutOverlapping();
 
 // pré-pagos (Pix/cartão) não pagos no prazo: cancela sem cobrança
+// a cada 15 s: o prazo de pagamento do grupo compartilhado é de 3 min
 Schedule::call(fn () => app(PagamentoCorridaService::class)->expirarPagamentosVencidos())
     ->name('corridas:expirar-pagamentos')
-    ->everyMinute()
+    ->everyFifteenSeconds()
+    ->withoutOverlapping();
+
+// salas compartilhadas: fecha grupos prontos e expira as vencidas
+Schedule::call(fn () => app(SalaCompartilhadaService::class)->processar())
+    ->name('compartilhada:processar-salas')
+    ->everyFiveSeconds()
+    ->withoutOverlapping();
+
+// fim da escada de despacho: grupo sem motorista vira corrida normal para cada um
+Schedule::call(fn () => app(GrupoCompartilhadoService::class)->dissolverSemMotorista())
+    ->name('compartilhada:dissolver-sem-motorista')
+    ->everyTenSeconds()
     ->withoutOverlapping();
 
 // estornos que ficaram sem resposta da AbacatePay

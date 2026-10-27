@@ -122,6 +122,39 @@ services:
                 condition: service_started
             valkey:
                 condition: service_started
+    # tempo real (Reverb): entrega os eventos da fila broadcasts (chat, corrida,
+    # chamadas). Sem ele os apps só recebem pela consulta periódica
+    queue-broadcasts:
+        build:
+            context: ./docker/8.5-nginx
+            dockerfile: Dockerfile
+            args:
+                WWWGROUP: '${WWWGROUP}'
+                TIMEZONE: '${CONTAINER_TIMEZONE:-America/Porto_Velho}'
+        image: 'sail-8.5/app'
+        command: php artisan queue:work --queue=broadcasts --tries=3 --sleep=1 --timeout=60
+        restart: unless-stopped
+        environment:
+            TZ: '${CONTAINER_TIMEZONE:-America/Porto_Velho}'
+            WWWUSER: '${WWWUSER}'
+            LARAVEL_SAIL: 1
+            # o Reverb roda no container laravel.test, não neste
+            REVERB_HOST: laravel.test
+        dns:
+            - '1.1.1.1'
+            - '8.8.8.8'
+        volumes:
+            - '.:/var/www/html'
+            - 'sail-vendor:/var/www/html/vendor'
+        networks:
+            - sail
+        depends_on:
+            composer:
+                condition: service_completed_successfully
+            mysql:
+                condition: service_started
+            valkey:
+                condition: service_started
     mysql:
         image: 'mysql:8.4'
         ports:

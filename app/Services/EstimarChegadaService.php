@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Corrida;
 use App\Models\StatusBusca;
+use App\Services\Compartilhada\GrupoCompartilhadoService;
 use Illuminate\Support\Facades\Cache;
 use Throwable;
 
@@ -44,14 +45,18 @@ class EstimarChegadaService
             return null;
         }
 
-        // em viagem, o tempo até o destino passa pelas paradas que faltam
-        $paradas = $alvo === 'destino'
-            ? $corrida->corrida_destinos
-                ->where('tipo', 'parada')
-                ->whereNull('concluida_em')
-                ->sortBy('ordem')
-                ->values()
-            : collect();
+        // em viagem, o tempo até o destino passa pelas paradas que faltam; na
+        // compartilhada, pelas paradas do grupo que vêm antes da deste passageiro
+        $paradas = $corrida->sala_compartilhada_id !== null
+            ? collect(app(GrupoCompartilhadoService::class)->paradasAntes($corrida, $alvo === 'origem' ? 'embarque' : 'desembarque'))
+                ->map(fn (array $parada) => (object) $parada)
+            : ($alvo === 'destino'
+                ? $corrida->corrida_destinos
+                    ->where('tipo', 'parada')
+                    ->whereNull('concluida_em')
+                    ->sortBy('ordem')
+                    ->values()
+                : collect());
 
         // a posição do motorista chega a cada 8s; arredondar a ~100m evita
         // refazer a chamada da Directions a cada respiro do GPS
