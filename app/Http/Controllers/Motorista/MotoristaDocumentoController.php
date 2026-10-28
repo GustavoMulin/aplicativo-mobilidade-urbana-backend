@@ -16,6 +16,7 @@ use App\Services\DocumentosMotoristaService;
 use App\Services\InformacoesDocumentoMotoristaService;
 use App\Services\LeituraCrlvService;
 use App\Services\SolicitacaoVeiculoService;
+use App\Services\VerificacaoTipoDocumentoService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -103,6 +104,12 @@ class MotoristaDocumentoController extends Controller
         if ($dados['tipo_documento'] === 'crlv' && isset($dados['veiculo_id'])) {
             $veiculo = $crlvService->veiculoVinculado((int) $dados['motorista_id'], (int) $dados['veiculo_id']);
             $crlvService->validar($veiculo, $dados['informacoes_complementares']);
+        }
+        $verificacao = app(VerificacaoTipoDocumentoService::class);
+        $tipo = TipoDocumentoMotorista::from($dados['tipo_documento']);
+        $verificacao->validar($request->file('arquivo'), $tipo);
+        if ($request->hasFile('arquivo_verso')) {
+            $verificacao->validar($request->file('arquivo_verso'), $tipo, 'arquivo_verso');
         }
         $anexo = $this->armazenarAnexoMotoristaService->salvarEnvio($request);
 
