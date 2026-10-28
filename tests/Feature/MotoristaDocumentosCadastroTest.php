@@ -172,3 +172,38 @@ it('salva e retorna o numero de registro como identificacao unica da CNH', funct
         ->assertJsonPath('cnh.observacao', "EAR\nA, B")
         ->assertJsonPath('pendencias', ['documentos', 'veiculo']);
 });
+
+it('motorista ativo renova CNH, Nada Consta e Seguro e continua ativo durante a análise', function () {
+    Storage::fake('motorista_documentos_anexos');
+    $usuario = User::factory()->create();
+    $this->actingAs($usuario, 'jwt')->postJson('/api/motorista/cadastro/aprovar-dev')->assertOk();
+    $motorista = Motorista::where('user_id', $usuario->id)->firstOrFail();
+    expect($motorista->status)->toBe('ativo');
+
+    foreach (['cnh', 'nada_consta', 'seguro_obrigatorio'] as $tipo) {
+        $this->actingAs($usuario, 'jwt')->post('/api/motorista/cadastro/documentos', [
+            'tipo_documento' => $tipo,
+            'arquivo' => UploadedFile::fake()->create("$tipo.pdf", 100, 'application/pdf'),
+        ], ['Accept' => 'application/json'])->assertCreated()->assertJsonPath('situacao', 'ativo');
+    }
+
+    $cadastro = $this->actingAs($usuario, 'jwt')->getJson('/api/motorista/cadastro')->assertOk();
+    $cadastro->assertJsonPath('situacao', 'ativo');
+    expect(collect($cadastro->json('documentos'))->where('tipo_documento', '!=', 'crlv')->pluck('status')->unique()->all())->toBe(['em_analise']);
+
+    // recusado pela gestão: deixa de estar em dia e o motorista precisa reenviar
+    $novo = MotoristaDocumento::where('motorista_id', $motorista->id)->where('tipo_documento', 'seguro_obrigatorio')->latest('id')->first();
+    $novo->update(['status' => 'reprovado']);
+    expect(app(App\Services\AtualizarSituacaoMotoristaService::class)->executar($motorista->fresh()))->toBe('pendente');
+});
+
+it('motorista ativo não troca o CRLV por este envio', function () {
+    Storage::fake('motorista_documentos_anexos');
+    $usuario = User::factory()->create();
+    $this->actingAs($usuario, 'jwt')->postJson('/api/motorista/cadastro/aprovar-dev')->assertOk();
+
+    $this->actingAs($usuario, 'jwt')->post('/api/motorista/cadastro/documentos', [
+        'tipo_documento' => 'crlv',
+        'arquivo' => UploadedFile::fake()->create('crlv.pdf', 100, 'application/pdf'),
+    ], ['Accept' => 'application/json'])->assertStatus(409);
+});

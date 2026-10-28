@@ -13,6 +13,7 @@ use App\Services\AtualizarSituacaoMotoristaService;
 use App\Services\CrlvVeiculoService;
 use App\Services\DocumentosMotoristaService;
 use App\Services\InformacoesDocumentoMotoristaService;
+use App\Services\VerificacaoTipoDocumentoService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\App;
@@ -148,9 +149,11 @@ class MotoristaCadastroController extends Controller
             ['status' => 'pendente']
         );
 
-        if ($motorista->status === self::ATIVO) {
+        // CNH, Nada Consta e Seguro podem ser renovados a qualquer momento; o CRLV
+        // de quem já está ativo entra pelo cadastro de novo veículo
+        if ($motorista->status === self::ATIVO && $dados['tipo_documento'] === TipoDocumentoMotorista::CRLV->value) {
             return response()->json([
-                'message' => 'Seu cadastro já foi aprovado. Fale com o suporte para trocar documentos.',
+                'message' => 'Seu cadastro já foi aprovado. Para trocar o CRLV, envie-o pelo cadastro de veículo.',
             ], 409);
         }
 
@@ -160,6 +163,7 @@ class MotoristaCadastroController extends Controller
                 $crlvService->validar($veiculo, $dados['informacoes_complementares']);
             }
         }
+        $this->conferirTipoDoArquivo($request, TipoDocumentoMotorista::from($dados['tipo_documento']));
         $anexo = $this->armazenarAnexoMotoristaService->salvarEnvio($request);
         try {
             [$documento, $situacao] = DB::transaction(function () use ($motorista, $dados, $anexo, $semDados): array {
@@ -200,6 +204,16 @@ class MotoristaCadastroController extends Controller
             'documento' => $documento->load(['veiculo']),
             'situacao' => $situacao,
         ], 201);
+    }
+
+    /** Recusa o arquivo antes de guardá-lo, para não substituir o documento atual por outro tipo. */
+    private function conferirTipoDoArquivo(Request $request, TipoDocumentoMotorista $tipo): void
+    {
+        $verificacao = app(VerificacaoTipoDocumentoService::class);
+        $verificacao->validar($request->file('arquivo'), $tipo);
+        if ($request->hasFile('arquivo_verso')) {
+            $verificacao->validar($request->file('arquivo_verso'), $tipo, 'arquivo_verso');
+        }
     }
 
     /**
